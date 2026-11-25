@@ -12,6 +12,32 @@ The same matrix, script-friendly: byte-faithful pipes, silent success,
 and exit codes that *are* the `DC_*` codes — `$?` tells you exactly
 what happened.
 
+**There is no GUI, on purpose** — `docconvert.exe` is a console
+program: it takes arguments, reads and writes files, and prints to the
+terminal. Nothing happens if you double-click it, so it now says so and
+waits for Enter instead of flashing a window and vanishing:
+
+```
+DocConvert 0.10.1 — a command-line converter. There is no window: it
+reads files, writes files, and prints to the terminal.
+
+  .\docconvert.exe help                           the full command list
+  .\docconvert.exe convert notes.md notes.html    a file conversion
+
+Press Enter to close this window.
+```
+
+Run it from PowerShell, `cmd`, or any terminal — `Shift`-right-click a
+folder and choose *Open PowerShell window here*, then
+`.\docconvert.exe capabilities`.
+
+The release binaries are unsigned, so Windows may warn the first time,
+and a zip that came through a browser carries the *mark of the web*:
+`Unblock-File .\docconvert.exe` (or Properties → *Unblock*) clears it. A
+console program never shows a window of its own — no window is not a
+crash. `docconvert version` and `docconvert capabilities` are the two
+fastest ways to prove a download works.
+
 ```console
 $ docconvert convert -f md -t html README.md README.html
 $ cat notes.md | docconvert convert -f md -t text

@@ -129,6 +129,13 @@
   numeric `VERSION_*` parts and the banner line in `include/docconvert.h`
   to it. A bump therefore fails CI until the header agrees — never
   hardcode a version string again.
+- `platform::console_is_fresh()` (`GetConsoleProcessList`, one attached
+  process) exists only so a double-click does not flash a window and
+  vanish. `platform::double_clicked(args)` combines it with "no
+  arguments", and both binaries print a notice and wait for Enter. Never
+  widen it: a typed command or a script must never block on stdin, so
+  the predicate stays "no arguments **and** a console that exists for us
+  alone", and non-Windows always answers false.
 - Gate: WinDevKit tools/gate.sh (fmt + clippy -D warnings BOTH
   targets + FULL tests). This crate's match-heavy code attracts
   collapsible-match lints; prefer guards from the start.

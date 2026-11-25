@@ -78,6 +78,9 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &[String]) -> CResult<()> {
+    if platform::double_clicked(args) {
+        return pause(&platform::double_click_notice());
+    }
     if args
         .iter()
         .any(|arg| arg == "-h" || arg == "--help" || arg == "help")
@@ -446,6 +449,15 @@ fn read_file(path: &str) -> CResult<String> {
 /// Write the document to stdout exactly as produced. A closed pipe
 /// (`docconvert … | head`) is a normal way for the reader to stop, not
 /// an error worth a non-zero exit.
+/// Print a notice meant for a human who double-clicked the exe, then
+/// wait for Enter so the console window stays up long enough to read it.
+fn pause(notice: &str) -> CResult<()> {
+    print_stdout(notice)?;
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    Ok(())
+}
+
 fn print_stdout(text: &str) -> CResult<()> {
     let mut stdout = std::io::stdout();
     match stdout

@@ -4,7 +4,24 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
-## [Unreleased]
+## [0.10.1] — 2026-11-25
+
+### Added
+
+- **Double-click notices.** `docconvert.exe` and `docconvert-mcp.exe`
+  are console programs with no GUI, so double-clicking them used to
+  flash a window and exit (the CLI) or sit silently on stdin (the
+  server). Both now detect a console created for them alone and print a
+  short card — what the program is, the four commands worth knowing, or
+  the `mcpServers` snippet — then wait for Enter. Detection is
+  `GetConsoleProcessList` on Windows (one attached process = a
+  double-click); a shell keeps its own process attached, so a script or
+  a typed command never pauses, and non-Windows builds never pause at
+  all. The notice text and the "is this a double-click?" decision are
+  unit-tested; the Windows console probe itself is verified by hand.
+- README: a **there is no GUI** note in the CLI section, plus the
+  unsigned-binary / *mark of the web* steps (`Unblock-File`) that
+  otherwise look exactly like "the program does not open".
 
 ### Changed
 
