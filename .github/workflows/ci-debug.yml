@@ -1,0 +1,21 @@
+# TEMPORARY diagnostics workflow (deleted before merge).
+# Run/job logs are unreachable from the agent sandbox, so failing test
+# output is re-emitted as check-run annotations, which the API returns.
+name: ci-debug
+on:
+  push:
+    branches: [arena/b7712006-docconvert]
+jobs:
+  diag:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: tests with annotations
+        shell: pwsh
+        run: |
+          cargo test --locked 2>&1 | Out-File -Encoding utf8 test.txt
+          Get-Content test.txt -Encoding utf8 | Select-String -Pattern 'FAILED|panicked|assertion|left:|right:|error\[' |
+            Select-Object -First 14 |
+            ForEach-Object { Write-Host ("::error::" + $_.Line) }
+          exit 1
