@@ -1273,10 +1273,16 @@ fn parse_list(lines: &[&str], start: usize, depth: usize) -> (Block, usize) {
                     if l.trim().is_empty() {
                         // Look ahead: blank ends the list unless the
                         // next line belongs to an item.
+                        // A blank line does not end the item when the next
+                        // line is indented to the content column, or is a
+                        // marker that continues the list. Only checking for
+                        // markers dropped the item's second paragraph
+                        // (`"* >t\n\u{3000}\\"` lost its shape that way).
                         if i + 1 < lines.len()
-                            && list_marker(lines[i + 1]).is_some_and(|(o, ind, _)| {
-                                (o == ordered && ind == base_indent) || ind > base_indent
-                            })
+                            && (line_indent(lines[i + 1]) >= content_col
+                                || list_marker(lines[i + 1]).is_some_and(|(o, ind, _)| {
+                                    (o == ordered && ind == base_indent) || ind > base_indent
+                                }))
                         {
                             items.last_mut().unwrap().push(String::new());
                             i += 1;
@@ -2005,6 +2011,18 @@ mod tests {
             let once = normalize(text).unwrap();
             assert_eq!(once, normalize(&once).unwrap(), "{text:?} → {once:?}");
         }
+    }
+
+    /// A blank line inside an item does not end it when the next line is
+    /// indented to the content column (`tests/fuzz.rs`, seed 2 round 930).
+    #[test]
+    fn a_list_item_keeps_its_second_block() {
+        let once = normalize("* >t\n\u{3000}\\").expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"), "{once:?}");
+        assert!(once.contains("  \\"), "{once:?}");
+        // A line at the outer column still ends the item.
+        let out = normalize("- a\n\nb\n").expect("normalize");
+        assert_eq!(out, "- a\n\nb\n");
     }
 
     /// Adjacent lists of one kind are a single list once written down, so
