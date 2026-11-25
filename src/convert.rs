@@ -23,6 +23,7 @@ pub const MATRIX: &[(&str, &str)] = &[
     ("html", "text"),
     ("html", "csv"),
     ("html", "json"),
+    ("markdown", "json"),
     ("text", "html"),
     ("text", "markdown"),
     ("csv", "json"),
@@ -236,6 +237,9 @@ pub fn convert_with_options(
         ("html", "csv") => html_to_csv(input),
         ("html", "json") => Ok(rows_to_json(&html_rows(input)?)),
         ("html", "tsv") => Ok(write_tsv(&html_rows(input)?)),
+        ("markdown", "json") => Ok(rows_to_json(&markdown_rows(&markdown_body(
+            input, options,
+        ))?)),
         ("markdown", "csv") => Ok(write_csv(&markdown_rows(&markdown_body(input, options))?)),
         ("markdown", "tsv") => Ok(write_tsv(&markdown_rows(&markdown_body(input, options))?)),
         ("text", "html") => Ok(text_to_html(input)),
@@ -292,7 +296,7 @@ pub fn convert_with_options(
             None,
         )),
         ("html", "opml") => Ok(crate::opml::from_headings(&heading_pairs(input)?, None)),
-        ("markdown", "json") | ("text", "csv") | ("text", "json") => Err((
+        ("text", "csv") | ("text", "json") => Err((
             ERR_NOT_SUPPORTED,
             format!("conversion {from} → {to} is not supported"),
         )),
@@ -387,17 +391,11 @@ fn scalar_of(cell: &str) -> Json {
     if cell == "false" {
         return Json::Bool(false);
     }
-    let numeric_chars = cell
-        .chars()
-        .all(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'));
-    // Leading-zero values like "007" are codes, not quantities:
-    // keep them strings (a bare "0" and "0.5" are numbers).
-    let leading_zero_code = cell.len() > 1
-        && cell.starts_with('0')
-        && !cell.starts_with("0.")
-        && !cell.starts_with("0e")
-        && !cell.starts_with("0E");
-    if numeric_chars && !leading_zero_code && cell.parse::<f64>().is_ok() {
+    // Only text that *is* a JSON number becomes one. `f64::from_str` would
+    // also accept `1.`, `.5` and `+1`, and writing those out would make the
+    // JSON this function returns unparseable — by us or anyone else. The
+    // same check keeps `007` a string, since a leading zero is not a number.
+    if crate::json::is_json_number(cell) {
         return Json::Num(cell.to_string());
     }
     Json::Str(cell.to_string())
@@ -476,6 +474,40 @@ fn rows_to_html_table(rows: &[Vec<String>]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cell is a number only when it *is* one: the old f64 test let
+    /// `1.`, `.5` and `+1` through, and the JSON we wrote was then
+    /// unparseable by anything, including us.
+    #[test]
+    fn json_numbers_are_only_numbers() {
+        let csv = "a,b,c,d,e,f\n1.,.5,+1,007,1e5,-2.5E-3\n";
+        let json = convert(csv, "csv", "json").unwrap();
+        for quoted in ["\"1.\"", "\".5\"", "\"+1\"", "\"007\""] {
+            assert!(json.contains(quoted), "{quoted} stayed a string in {json}");
+        }
+        for bare in ["1e5", "-2.5E-3"] {
+            assert!(json.contains(bare), "{bare} is a number in {json}");
+        }
+        // The document we just wrote parses, as does the pretty form.
+        assert!(crate::json::parse_json(&json).is_ok(), "{json}");
+    }
+
+    #[test]
+    fn markdown_to_json_reads_the_one_table() {
+        let json = convert("| a | b |\n| --- | --- |\n| 1 | x |\n", "markdown", "json")
+            .expect("md to json");
+        assert_eq!(
+            crate::json::parse_json(&json).unwrap().to_compact(),
+            r#"[{"a":1,"b":"x"}]"#
+        );
+        // Prose is not a table, exactly as md→csv insists.
+        let error = convert("just prose\n", "md", "json").expect_err("prose");
+        assert_eq!(error.0, ERR_CORRUPT, "{error:?}");
+        // A heading may introduce the table, as in the other table pairs.
+        let json =
+            convert("# Totals\n\n| a |\n| --- |\n| 2 |\n", "md", "json").expect("with heading");
+        assert!(json.contains("\"a\": 2"), "{json}");
+    }
 
     #[test]
     fn matrix_highlights() {

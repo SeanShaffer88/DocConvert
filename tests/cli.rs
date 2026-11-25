@@ -348,6 +348,38 @@ fn normalize_styles_and_streamed_blocks() {
     let bad = run(&["normalize", "--style", "pdf"], Some(doc));
     assert_eq!(bad.status.code(), Some(1), "{}", err(&bad));
 
+    // A flag wins over the same key in --options, in either order — the
+    // documented rule, so the two spellings cannot disagree.
+    let doc = "---\ntitle: T\n---\nbody\n";
+    for args in [
+        &[
+            "convert",
+            "-f",
+            "md",
+            "-t",
+            "html",
+            "--front-matter",
+            "table",
+            "--options",
+            "{\"front_matter\":\"strip\"}",
+        ][..],
+        &[
+            "convert",
+            "-f",
+            "md",
+            "-t",
+            "html",
+            "--options",
+            "{\"front_matter\":\"strip\"}",
+            "--front-matter",
+            "table",
+        ][..],
+    ] {
+        let out_html = run(args, Some(doc));
+        assert!(out_html.status.success(), "{}", err(&out_html));
+        assert!(out(&out_html).contains("<table>"), "{}", out(&out_html));
+    }
+
     // Streaming: text and markdown both stream block by block, and the
     // result is exactly what the whole-document path produces.
     let dir = scratch_dir("blocks");

@@ -196,7 +196,10 @@ pub fn handle_line(line: &str) -> Option<String> {
     // No id means a notification: it gets no reply.
     let id = id?;
     match method.as_str() {
-        "initialize" => Some(response(&id, initialize_result(params.as_ref()))),
+        "initialize" => Some(match initialize_result(params.as_ref()) {
+            Ok(result) => response(&id, result),
+            Err((code, message)) => error_response(&id, code, &message),
+        }),
         "ping" => Some(response(&id, object(vec![]))),
         "tools/list" => Some(response(&id, tools_list_result())),
         "tools/call" => match tool_call_result(params.as_ref()) {
@@ -236,7 +239,7 @@ fn error_response(id: &Json, code: i32, message: &str) -> String {
     )
 }
 
-fn initialize_result(params: Option<&Json>) -> Json {
+fn initialize_result(params: Option<&Json>) -> CResult<Json> {
     let requested = params
         .and_then(|params| field(params, "protocolVersion"))
         .and_then(|version| match version {
@@ -245,9 +248,24 @@ fn initialize_result(params: Option<&Json>) -> Json {
         });
     let protocol = match requested {
         Some(version) if KNOWN_PROTOCOLS.contains(&version.as_str()) => version,
-        _ => LATEST_PROTOCOL.to_string(),
+        // A version we do not know but that is shaped like one is a *newer*
+        // client: answer with the newest revision we speak, as the spec's
+        // upgrade path asks. Anything else is a typo, and saying so is much
+        // kinder than silently pretending we negotiated something.
+        Some(version) if date_shaped(&version) => LATEST_PROTOCOL.to_string(),
+        Some(version) => {
+            return Err((
+                INVALID_PARAMS,
+                format!(
+                    "protocolVersion '{version}' is not a revision this server knows \
+                     (known: {})",
+                    KNOWN_PROTOCOLS.join(", ")
+                ),
+            ))
+        }
+        None => LATEST_PROTOCOL.to_string(),
     };
-    object(vec![
+    Ok(object(vec![
         ("protocolVersion", string(&protocol)),
         (
             "capabilities",
@@ -264,7 +282,19 @@ fn initialize_result(params: Option<&Json>) -> Json {
             ]),
         ),
         ("instructions", string(INSTRUCTIONS)),
-    ])
+    ]))
+}
+
+/// Whether a string has the shape of an MCP protocol revision
+/// (`YYYY-MM-DD`). Only the shape matters here: the point is to tell a
+/// newer client apart from a typo, not to validate the calendar.
+fn date_shaped(version: &str) -> bool {
+    let bytes = version.as_bytes();
+    bytes.len() == 10
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            4 | 7 => *byte == b'-',
+            _ => byte.is_ascii_digit(),
+        })
 }
 
 fn tools_list_result() -> Json {

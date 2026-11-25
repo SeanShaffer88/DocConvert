@@ -159,6 +159,25 @@
   `Style::parse_spec`: comma- or space-separated tokens, later ones win,
   `github` resets to the defaults. It is sugar over `--emphasis`/`--fence`,
   not a third setting — never let the two disagree.
-- Gate: WinDevKit tools/gate.sh (fmt + clippy -D warnings BOTH
-  targets + FULL tests). This crate's match-heavy code attracts
-  collapsible-match lints; prefer guards from the start.
+- Gate: `tools/gate.sh` in this repo (fmt + clippy `-D warnings` +
+  full tests + release build) — the same four steps
+  `.github/workflows/ci.yml` runs. This crate's match-heavy code
+  attracts collapsible-match lints; prefer guards from the start.
+  `ci.yml`/`release.yml` exist only under `.github/workflows/`: never
+  keep a second copy at the root, which is how they drifted before.
+- Numbers in JSON are validated by `json::is_json_number`, never by
+  `f64::from_str`: `1.`, `.5`, `+1` and `01` all parse as floats and
+  none of them is a JSON number, so inferring one and writing it out
+  produces JSON nobody can read — including us. Every writer that turns
+  text into a number (`scalar_of`, front-matter scalars) uses that one
+  predicate, and the parser uses it too.
+- Anything that recurses over *input* structure needs a depth cap, not
+  a bigger stack: `html::MAX_DEPTH` (refuses past 256 nested elements,
+  `ERR_CORRUPT`), `json::MAX_DEPTH` (128), `markdown::MAX_BLOCK_DEPTH`
+  (48, where the excess stays literal text instead of erroring). The
+  DLL's memory is the host's, and a stack overflow there is not an
+  error the host can catch.
+- `tests/fuzz.rs` is the regression net for the parsers: a seeded
+  generator, a small sweep in CI and a long ignored one. When it finds
+  something, the seed, round and input are in the message — turn that
+  into a named test and keep the sweep as it is.

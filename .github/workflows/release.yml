@@ -1,7 +1,7 @@
-# Release workflow — builds the x64 DLL package and attaches it to
-# the GitHub Release for the pushed version tag. The release itself
-# (tag + notes) is created in the GitHub web UI; this workflow only
-# builds and uploads the zip. Binaries are unsigned.
+# Release workflow — pushing a `v*` tag builds the x64 DLL package and
+# creates the GitHub Release with the zip attached (notes are written
+# afterwards with `gh release edit`). The canonical copy: there is no
+# second one at the repository root. Binaries are unsigned.
 name: release
 on:
   push:

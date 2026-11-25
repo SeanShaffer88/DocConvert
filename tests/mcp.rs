@@ -159,6 +159,20 @@ fn handshake_and_tool_list() {
     );
     assert!(field(result, "instructions").is_some());
 
+    // A typo'd revision is refused with -32602; a *newer* (date-shaped)
+    // one still negotiates down to the newest revision we speak.
+    let response = session.request("initialize", "{\"protocolVersion\":\"2025-6-18\"}");
+    let error = field(&response, "error").expect("error for a typo'd version");
+    assert_eq!(field(error, "code"), Some(&Json::Num("-32602".into())));
+    let response = session.request("initialize", "{\"protocolVersion\":\"2099-01-01\"}");
+    assert_eq!(
+        field(
+            field(&response, "result").expect("result"),
+            "protocolVersion"
+        ),
+        Some(&Json::Str("2025-06-18".into()))
+    );
+
     // A notification must not draw a reply — the very next line belongs
     // to the following request.
     session.send("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");

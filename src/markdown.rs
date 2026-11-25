@@ -902,7 +902,25 @@ enum Block {
     Table(Vec<String>, Vec<char>, Vec<Vec<String>>), // headers, aligns ('l','c','r'), rows
 }
 
+/// How deeply blocks may nest — a quote in a quote in a list item. The
+/// parser and the renderers both walk one frame per level, so this is what
+/// keeps a hostile document from overflowing the stack; past the cap the
+/// remaining lines stay literal text rather than being dropped.
+const MAX_BLOCK_DEPTH: usize = 48;
+
 fn parse_blocks(lines: &[&str]) -> Vec<Block> {
+    parse_blocks_at(lines, 0)
+}
+
+fn parse_blocks_at(lines: &[&str], depth: usize) -> Vec<Block> {
+    if depth >= MAX_BLOCK_DEPTH {
+        let text = lines.join("\n");
+        return if text.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![Block::Paragraph(text)]
+        };
+    }
     let mut blocks = Vec::new();
     let mut i = 0usize;
     while i < lines.len() {
@@ -940,12 +958,12 @@ fn parse_blocks(lines: &[&str]) -> Vec<Block> {
                 i += 1;
             }
             let refs: Vec<&str> = inner_lines.iter().map(|s| s.as_str()).collect();
-            blocks.push(Block::Quote(parse_blocks(&refs)));
+            blocks.push(Block::Quote(parse_blocks_at(&refs, depth + 1)));
             continue;
         }
         // List.
         if list_marker(line).is_some() {
-            let (list, consumed) = parse_list(lines, i);
+            let (list, consumed) = parse_list(lines, i, depth);
             blocks.push(list);
             i += consumed;
             continue;
@@ -1126,7 +1144,7 @@ fn tail_from(line: &str, column: usize) -> String {
     line[cut..].to_string()
 }
 
-fn parse_list(lines: &[&str], start: usize) -> (Block, usize) {
+fn parse_list(lines: &[&str], start: usize, depth: usize) -> (Block, usize) {
     let (ordered, base_indent, _) = list_marker(lines[start]).unwrap();
     let mut items: Vec<Vec<String>> = Vec::new();
     let mut i = start;
@@ -1178,7 +1196,7 @@ fn parse_list(lines: &[&str], start: usize) -> (Block, usize) {
         .iter()
         .map(|lines| {
             let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
-            parse_blocks(&refs)
+            parse_blocks_at(&refs, depth + 1)
         })
         .collect();
     (Block::List(ordered, item_blocks), consumed)
@@ -1837,6 +1855,16 @@ mod tests {
 
     /// One flag for the pair: presets, and a comma list that reads in
     /// either order.
+    #[test]
+    fn deep_block_nesting_stays_text_instead_of_crashing() {
+        let quoted = format!("{}deep\n", "> ".repeat(2_000));
+        let once = normalize(&quoted).expect("normalize");
+        assert!(once.contains("deep"), "{once}");
+        assert_eq!(normalize(&once).unwrap(), once);
+        let listed = "> - ".repeat(1_000) + "deep\n";
+        assert!(normalize(&listed).unwrap().contains("deep"));
+    }
+
     #[test]
     fn style_specs_cover_presets_and_lists() {
         assert_eq!(Style::parse_spec("github").unwrap(), Style::default());
