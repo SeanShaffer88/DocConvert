@@ -424,10 +424,9 @@ mod tests {
 
     fn sample(name: &str) -> &'static str {
         match name {
-            "markdown" => {
-                "# Title\n\nHello **there** and [a link](https://e.com).\n\n\
-                 | A | B |\n|---|---|\n| 1 | 2 |\n"
-            }
+            // A single table under a heading: every listed pair can
+            // handle this shape, including markdown→csv.
+            "markdown" => "# Title\n\n| A | B |\n|---|---|\n| 1 | 2 |\n",
             "html" => {
                 "<h1>Title</h1><p>Hello <strong>there</strong></p>\
                        <table><tr><th>A</th></tr><tr><td>1</td></tr></table>"

@@ -297,11 +297,7 @@ mod tests {
         dc_free_string(p);
         assert_eq!(s, "<h1>Hi</h1>\n<p>Some <strong>bold</strong> text.</p>");
 
-        let bad = dc_convert(
-            cs("x").as_ptr(),
-            cs("markdown").as_ptr(),
-            cs("csv").as_ptr(),
-        );
+        let bad = dc_convert(cs("x").as_ptr(), cs("text").as_ptr(), cs("csv").as_ptr());
         assert!(bad.is_null());
         assert_eq!(dc_last_error_code(), crate::ERR_NOT_SUPPORTED);
 
