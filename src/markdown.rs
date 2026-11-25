@@ -642,10 +642,20 @@ fn normalize_inline(text: &str, marker: char) -> String {
                 let before = i.checked_sub(1).map(|index| chars[index]);
                 let after = chars.get(close + run).copied();
                 let neighbour_tick = before == Some('`') || after == Some('`');
+                // Dropping padding keeps every backtick where it was, so it
+                // cannot change how runs pair elsewhere. Shortening the run
+                // can: the ticks it frees up may pair with a stray one later
+                // in the line (`"`a``:``- `"` did exactly that, and the second
+                // pass then read a span across the last two ticks). So a run
+                // is only shortened when it is the line's only backtick.
+                let elsewhere_tick =
+                    chars[..i].contains(&'`') || chars[close + run..].contains(&'`');
+                let run_ok = run == 1 || !elsewhere_tick;
                 if !trimmed.is_empty()
                     && !trimmed.contains('`')
                     && !inner.contains('\n')
                     && !neighbour_tick
+                    && run_ok
                 {
                     out.push('`');
                     out.push_str(trimmed);
@@ -2007,7 +2017,13 @@ mod tests {
         assert_eq!(once, normalize(&once).unwrap(), "{once:?}");
         // And an emphasis rewrite never lands beside a backtick, or around
         // code.
-        for text in ["_``_``\n", "_```_1``", "``x````y``"] {
+        for text in [
+            "_``_``\n",
+            "_```_1``",
+            "``x````y``",
+            "`a``:``- `",
+            "``x`` y",
+        ] {
             let once = normalize(text).unwrap();
             assert_eq!(once, normalize(&once).unwrap(), "{text:?} → {once:?}");
         }
