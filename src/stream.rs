@@ -206,7 +206,7 @@ fn stream_records(in_path: &str, out_path: &str, tsv_in: bool, to: &str) -> CRes
     let mut in_quotes = false;
     let mut record = String::new();
     let mut raw = String::new();
-    let mut write_record_text = |text: &str, sink: &mut BufWriter<File>| -> CResult<usize> {
+    let write_record_text = |text: &str, sink: &mut BufWriter<File>| -> CResult<usize> {
         let rows = if tsv_in {
             parse_tsv(text)?
         } else {

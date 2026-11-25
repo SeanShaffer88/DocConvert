@@ -82,7 +82,7 @@ pub fn to_markdown(input: &str) -> CResult<String> {
         // Tables: grid (`+---+`) and simple (`===  ===`) both become GFM.
         if let Some((md, consumed)) = table(&lines[i..]) {
             flush(&mut blocks, &mut paragraph);
-            blocks.push(md);
+            blocks.push(md.trim_end().to_string());
             i += consumed;
             continue;
         }

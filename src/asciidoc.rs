@@ -82,7 +82,7 @@ pub fn to_markdown(input: &str) -> CResult<String> {
             flush(&mut blocks, &mut paragraph);
             let (rendered, consumed) = render_table(&lines[i..]);
             if !rendered.is_empty() {
-                blocks.push(rendered);
+                blocks.push(rendered.trim_end().to_string());
             }
             i += consumed;
             continue;

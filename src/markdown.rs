@@ -1779,9 +1779,11 @@ mod tests {
 
     #[test]
     fn fences_grow_when_the_body_contains_them() {
-        let input = "````\na ``` fence\n````\n";
-        let out = normalize_with(input, Style::default()).unwrap();
-        assert_eq!(out, "````\na ``` fence\n````\n");
+        // A fence one longer than anything inside the body.
+        assert_eq!(fence_for("plain code", Fence::Backtick), "```");
+        assert_eq!(fence_for("a ``` fence", Fence::Backtick), "````");
+        assert_eq!(fence_for("plain code", Fence::Tilde), "~~~");
+        assert_eq!(fence_for("a ~~~ run", Fence::Tilde), "~~~~");
     }
 
     #[test]
