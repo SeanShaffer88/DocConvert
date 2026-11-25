@@ -1,0 +1,19 @@
+name: ci-debug
+on:
+  push:
+jobs:
+  dbg:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: clippy
+        shell: bash
+        run: |
+          set +e
+          cargo clippy --all-targets --message-format=short -- -D warnings > out.txt 2>&1
+          code=$?
+          grep -n "error" out.txt | head -30 | while IFS= read -r line; do echo "::error::$line"; done
+          exit $code
