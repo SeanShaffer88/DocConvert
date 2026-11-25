@@ -1,0 +1,32 @@
+name: ci-debug
+on: [push]
+
+jobs:
+  debug:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: diagnostics
+        shell: bash
+        run: |
+          emit () {
+            local label="$1"; shift
+            if "$@" > out.txt 2>&1; then
+              echo "ok: $label"
+            else
+              echo "FAILED: $label"
+              python - <<'PY'
+import io
+text = io.open('out.txt', encoding='utf-8', errors='replace').read()
+tail = text.strip().splitlines()[-45:]
+payload = "%0A".join(l.replace('%', '%25').replace('\r', '') for l in tail)
+print("::error::" + payload)
+PY
+            fi
+          }
+          emit fmt cargo fmt --all -- --check
+          emit clippy cargo clippy --all-targets -- -D warnings
+          emit test cargo test --locked
