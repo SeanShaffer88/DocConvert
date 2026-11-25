@@ -335,6 +335,19 @@ fn normalize_styles_and_streamed_blocks() {
     let bad = run(&["normalize", "--fence", "pdf"], Some(doc));
     assert_eq!(bad.status.code(), Some(1), "{}", err(&bad));
 
+    // One flag for both markers, and a later flag still wins.
+    let preset = run(&["normalize", "--style", "underscore,tilde"], Some(doc));
+    assert!(preset.status.success(), "{}", err(&preset));
+    assert_eq!(out(&preset), "_soft_ and __loud__\n\n~~~\ncode\n~~~\n");
+    let preset = run(
+        &["normalize", "--style", "tilde", "--fence", "backtick"],
+        Some(doc),
+    );
+    assert!(preset.status.success(), "{}", err(&preset));
+    assert!(out(&preset).contains("```\ncode\n```"), "{}", out(&preset));
+    let bad = run(&["normalize", "--style", "pdf"], Some(doc));
+    assert_eq!(bad.status.code(), Some(1), "{}", err(&bad));
+
     // Streaming: text and markdown both stream block by block, and the
     // result is exactly what the whole-document path produces.
     let dir = scratch_dir("blocks");

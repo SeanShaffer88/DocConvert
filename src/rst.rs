@@ -11,8 +11,8 @@
 //!
 //! Everything lands as Markdown first, and the Markdown renderers do the
 //! rest, so `rst → markdown` and `rst → html` can never disagree about
-//! what a document says. Grid and simple tables are out of scope: they
-//! are a layout language of their own (see ROADMAP.md).
+//! what a document says. Grid and simple tables become GFM tables, spans
+//! included — see `grid_table` for how a span is flattened.
 
 use crate::CResult;
 
@@ -185,40 +185,171 @@ fn is_grid_border(line: &str) -> bool {
         && trimmed.chars().all(|c| matches!(c, '+' | '-' | '='))
 }
 
+/// A grid table, whose cells may wrap across lines, span columns (a missing
+/// `|`) or span rows (a missing `-` run in the separator).
+///
+/// The grid is read column by column: the opening border fixes the column
+/// boundaries, and every later line is cut at those boundaries. A cell is
+/// open until a separator line closes it, which is why a row-spanning cell
+/// simply keeps collecting text while its neighbours start new cells. GFM
+/// has no spans, so a span is flattened: the text lives in the cell where
+/// it starts, and the cells it covers are left empty.
 fn grid_table(lines: &[&str]) -> Option<(String, usize)> {
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    let mut header_rows: Option<usize> = None;
+    let bounds = char_positions(lines[0].trim_end(), '+');
+    if bounds.len() < 2 {
+        return None;
+    }
+    let columns = bounds.len() - 1;
+    let mut cells: Vec<Vec<String>> = Vec::new();
+    let mut row_of = vec![0usize; columns];
+    let mut text = vec![String::new(); columns];
+    let mut open = vec![false; columns];
+    let mut header: Option<usize> = None;
     let mut i = 1usize;
+
     while i < lines.len() {
-        let line = lines[i].trim_end();
-        if is_grid_border(line) {
-            if header_rows.is_none() && line.contains('=') {
-                header_rows = Some(rows.len());
+        let chars: Vec<char> = lines[i].trim_end().chars().collect();
+        let rule = !chars.is_empty()
+            && chars.iter().all(|c| matches!(c, '+' | '-' | '=' | ' '))
+            && chars.iter().any(|c| matches!(c, '-' | '='));
+        if rule {
+            for column in 0..columns {
+                close_cell(&mut cells, &mut text, &mut open, &row_of, column);
+            }
+            for row in row_of.iter_mut() {
+                *row += 1;
+            }
+            if header.is_none() && chars.contains(&'=') {
+                header = Some(row_of[0]);
             }
             i += 1;
-            if i >= lines.len() || !lines[i].trim_start().starts_with('|') {
-                break;
+            match lines.get(i) {
+                Some(next) if starts_table_line(next) => continue,
+                _ => break,
             }
-            continue;
         }
-        if !line.trim_start().starts_with('|') {
-            break;
+        let segments = grid_segments(&chars, &bounds);
+        let mut column = 0usize;
+        while column < columns {
+            if is_rule_segment(&segments[column]) {
+                // A separator under this column only: its cell ends, the
+                // cells beside it keep going (that is a row span).
+                close_cell(&mut cells, &mut text, &mut open, &row_of, column);
+                row_of[column] += 1;
+                column += 1;
+                continue;
+            }
+            let start = column;
+            let mut piece = String::new();
+            while column < columns && !is_rule_segment(&segments[column]) {
+                piece.push_str(&segments[column]);
+                column += 1;
+            }
+            append_cell(&mut text, &mut open, start, &collapse(&piece));
+            // The columns to the right belong to this cell.
+            for covered in start + 1..column {
+                text[covered].clear();
+                open[covered] = false;
+            }
         }
-        rows.push(split_grid_row(line));
         i += 1;
     }
+
+    let rows = finish_rows(&cells, columns);
     if rows.is_empty() {
         return None;
     }
-    Some((assemble(rows, header_rows), i))
+    Some((assemble(rows, header), i))
 }
 
-fn split_grid_row(line: &str) -> Vec<String> {
-    let trimmed = line.trim().trim_matches('|');
-    trimmed
-        .split('|')
-        .map(|cell| cell.trim().to_string())
+/// Whether a line is inside a grid table: it starts with a border corner or
+/// a cell wall.
+fn starts_table_line(line: &str) -> bool {
+    matches!(line.trim_start().chars().next(), Some('|') | Some('+'))
+}
+
+/// Character positions of `needle` in `line`.
+fn char_positions(line: &str, needle: char) -> Vec<usize> {
+    line.chars()
+        .enumerate()
+        .filter(|(_, c)| *c == needle)
+        .map(|(index, _)| index)
         .collect()
+}
+
+/// Cut a line at the column boundaries, one string per column. A short line
+/// is padded, so a truncated row cannot shift the columns.
+fn grid_segments(chars: &[char], bounds: &[usize]) -> Vec<String> {
+    let mut segments = Vec::with_capacity(bounds.len() - 1);
+    for pair in bounds.windows(2) {
+        let (from, to) = (pair[0] + 1, pair[1]);
+        let mut segment = String::new();
+        for index in from..to {
+            segment.push(*chars.get(index).unwrap_or(&' '));
+        }
+        segments.push(segment);
+    }
+    segments
+}
+
+/// A segment made of nothing but rule characters: the cell under it ends
+/// here.
+fn is_rule_segment(segment: &str) -> bool {
+    !segment.is_empty() && segment.chars().all(|c| matches!(c, '-' | '='))
+}
+
+/// Write a finished cell where its column currently is, and start the next.
+fn close_cell(
+    cells: &mut Vec<Vec<String>>,
+    text: &mut [String],
+    open: &mut [bool],
+    row_of: &[usize],
+    column: usize,
+) {
+    if !open[column] {
+        return;
+    }
+    put_cell(cells, row_of[column], column, text[column].trim());
+    text[column].clear();
+    open[column] = false;
+}
+
+fn append_cell(text: &mut [String], open: &mut [bool], column: usize, piece: &str) {
+    if piece.is_empty() {
+        return;
+    }
+    if open[column] && !text[column].is_empty() {
+        text[column].push(' ');
+    }
+    text[column].push_str(piece);
+    open[column] = true;
+}
+
+fn put_cell(cells: &mut Vec<Vec<String>>, row: usize, column: usize, value: &str) {
+    while cells.len() <= row {
+        cells.push(Vec::new());
+    }
+    let line = &mut cells[row];
+    while line.len() <= column {
+        line.push(String::new());
+    }
+    line[column] = value.to_string();
+}
+
+fn finish_rows(cells: &[Vec<String>], columns: usize) -> Vec<Vec<String>> {
+    cells
+        .iter()
+        .map(|row| {
+            let mut row = row.clone();
+            row.resize(columns, String::new());
+            row
+        })
+        .collect()
+}
+
+/// Squash a cell's whitespace, including the line breaks of a wrapped cell.
+fn collapse(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// A run of `=` groups: the column spans of a simple table.
@@ -266,7 +397,26 @@ fn simple_table(lines: &[&str]) -> Option<(String, usize)> {
             i += 1;
             break;
         }
-        rows.push(split_simple_row(line, &spans));
+        let cells = split_simple_row(line, &spans);
+        // A row whose stub column is empty continues the row above it: that
+        // is how a simple table wraps a cell over several lines.
+        let continuation = cells.first().is_none_or(|stub| stub.is_empty());
+        if continuation && !rows.is_empty() {
+            if let Some(previous) = rows.last_mut() {
+                for (index, cell) in cells.iter().enumerate().skip(1) {
+                    if cell.is_empty() || index >= previous.len() {
+                        continue;
+                    }
+                    if !previous[index].is_empty() {
+                        previous[index].push(' ');
+                    }
+                    previous[index].push_str(cell);
+                }
+            }
+            i += 1;
+            continue;
+        }
+        rows.push(cells);
         i += 1;
     }
     if rows.is_empty() {
@@ -277,11 +427,19 @@ fn simple_table(lines: &[&str]) -> Option<(String, usize)> {
 
 fn split_simple_row(line: &str, spans: &[(usize, usize)]) -> Vec<String> {
     let chars: Vec<char> = line.chars().collect();
+    let last = spans.len().saturating_sub(1);
     spans
         .iter()
-        .map(|&(start, end)| {
+        .enumerate()
+        .map(|(index, &(start, end))| {
             let from = start.min(chars.len());
-            let to = end.min(chars.len());
+            // The rightmost column is unbounded, so text may run past the
+            // width the border line suggests.
+            let to = if index == last {
+                chars.len()
+            } else {
+                end.min(chars.len())
+            };
             chars[from..to]
                 .iter()
                 .collect::<String>()
@@ -665,6 +823,54 @@ mod tests {
         assert!(
             html.contains("<a href=\"https://example.com\">text</a>"),
             "{html}"
+        );
+    }
+
+    /// GFM has no spans, so a grid cell that covers columns or rows keeps
+    /// its text in the cell where it starts and leaves the rest empty.
+    #[test]
+    fn grid_spans_and_wrapped_cells_are_flattened() {
+        let spanning = "+-------+-------+-------+\n\
+                        | A     | B     | C     |\n\
+                        +=======+=======+=======+\n\
+                        | one   | two   | three |\n\
+                        +-------+-------+-------+\n\
+                        | across columns        |\n\
+                        +-------+-------+-------+\n";
+        assert_eq!(
+            to_markdown(spanning).unwrap(),
+            "| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n\
+             | across columns |  |  |\n"
+        );
+
+        let tall = "+-------+-------+\n\
+                    | a     | b     |\n\
+                    +=======+=======+\n\
+                    | tall  | one   |\n\
+                    | cell  +-------+\n\
+                    | here  | two   |\n\
+                    +-------+-------+\n";
+        assert_eq!(
+            to_markdown(tall).unwrap(),
+            "| a | b |\n| --- | --- |\n| tall cell here | one |\n|  | two |\n"
+        );
+
+        let wrapped = "+-------+-------+\n\
+                       | line  | one   |\n\
+                       | two   |       |\n\
+                       +-------+-------+\n";
+        assert_eq!(
+            to_markdown(wrapped).unwrap(),
+            "| line two | one |\n| --- | --- |\n"
+        );
+    }
+
+    #[test]
+    fn simple_tables_wrap_cells_over_lines() {
+        let doc = "=====  ======\nName   Note\n=====  ======\nMilk   needs\n       two lines\n=====  ======\n";
+        assert_eq!(
+            to_markdown(doc).unwrap(),
+            "| Name | Note |\n| --- | --- |\n| Milk | needs two lines |\n"
         );
     }
 

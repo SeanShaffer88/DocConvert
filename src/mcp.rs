@@ -124,7 +124,8 @@ const TOOLS: &str = r#"[
       "properties": {
         "input": { "type": "string", "description": "Markdown text to normalize." },
         "emphasis": { "type": "string", "enum": ["asterisk", "underscore"], "description": "Emphasis marker to write (default asterisk)." },
-        "fence": { "type": "string", "enum": ["backtick", "tilde"], "description": "Code fence character to write (default backtick)." }
+        "fence": { "type": "string", "enum": ["backtick", "tilde"], "description": "Code fence character to write (default backtick)." },
+        "style": { "type": "string", "description": "A preset for both markers: github (default), asterisk, underscore, backtick, tilde — or a comma-separated list such as \"underscore,tilde\". Later arguments win." }
       },
       "required": ["input"],
       "additionalProperties": false
@@ -431,6 +432,9 @@ fn tool_normalize(arguments: &Json) -> CResult<String> {
     if let Some(fence) = optional_string(arguments, "fence")? {
         style.fence = crate::markdown::Fence::parse(&fence)?;
     }
+    if let Some(preset) = optional_string(arguments, "style")? {
+        style = crate::markdown::Style::parse_spec(&preset)?;
+    }
     crate::markdown::normalize_with(&input, style)
 }
 
@@ -481,6 +485,15 @@ fn capabilities_json() -> String {
                         (
                             "fence",
                             Json::Array(vec![string("backtick"), string("tilde")]),
+                        ),
+                        (
+                            "style",
+                            Json::Array(
+                                crate::markdown::Style::presets()
+                                    .iter()
+                                    .map(|preset| string(preset))
+                                    .collect(),
+                            ),
                         ),
                     ]),
                 ),

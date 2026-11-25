@@ -143,6 +143,22 @@
   regenerate the `.ico` with all six sizes and keep the test green — it
   reads the section back per the PE spec, which is the only check that can
   run before Windows links it.
+- Tables: `markdown::table` is the only GFM writer, and GFM has no spans.
+  Both readers flatten instead of refusing: a spanning cell keeps its text
+  where the span starts and the covered cells are empty, wrapped cells
+  join with single spaces, and column widths are advisory. rST reads its
+  grid column-by-column (one open cell per column, closed by a rule
+  segment) so spans fall out of the same loop; AsciiDoc reads cell
+  specifiers before each `|` and reserves the cells a row span covers.
+  Empty cells are kept — dropping them shifts every column after them.
+- Streaming covers the table pairs too, and the same rule applies:
+  identical output or fall back. A ragged CSV cannot become one GFM table
+  without its widest row, so the record streamer returns `None` and the
+  whole-document path writes the file.
+- `--style` (and `style` in the MCP tool and in `dc_normalize` options) is
+  `Style::parse_spec`: comma- or space-separated tokens, later ones win,
+  `github` resets to the defaults. It is sugar over `--emphasis`/`--fence`,
+  not a third setting — never let the two disagree.
 - Gate: WinDevKit tools/gate.sh (fmt + clippy -D warnings BOTH
   targets + FULL tests). This crate's match-heavy code attracts
   collapsible-match lints; prefer guards from the start.

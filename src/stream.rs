@@ -5,10 +5,11 @@
 //!
 //! - **identity copies** of the byte-faithful formats (a 64 KiB copy),
 //! - **text** → markdown / html, one paragraph at a time,
-//! - **CSV and TSV** → csv / tsv / text, one RFC 4180 record at a time
-//!   (records are split quote-aware and then parsed by `csv::parse_*`,
-//!   so a streamed record cannot disagree with the whole-file path),
-//! - **markdown** → html / text, one block at a time.
+//! - **CSV and TSV** → csv / tsv / text / markdown, one RFC 4180 record
+//!   at a time (records are split quote-aware and then parsed by
+//!   `csv::parse_*`, so a streamed record cannot disagree with the
+//!   whole-file path),
+//! - **markdown** → html / text / csv / tsv, one block at a time.
 //!
 //! Markdown has document-wide constructs — reference link definitions
 //! and footnotes — and a streamed pass would see them too late. So the
@@ -58,8 +59,14 @@ pub fn convert_file(
         | ("tsv", "csv")
         | ("tsv", "tsv")
         | ("tsv", "text") => stream_records(in_path, out_path, from == "tsv", to.as_str()),
+        ("csv", "markdown") | ("tsv", "markdown") => {
+            stream_records(in_path, out_path, from == "tsv", to.as_str())
+        }
         ("markdown", "html") => stream_markdown(in_path, out_path, Flavor::Html),
         ("markdown", "text") => stream_markdown(in_path, out_path, Flavor::Text),
+        ("markdown", "csv") | ("markdown", "tsv") => {
+            stream_markdown_rows(in_path, out_path, to == "tsv")
+        }
         _ => Ok(None),
     };
     match streamed? {
@@ -186,15 +193,16 @@ fn flush_paragraph(
     Ok(())
 }
 
-/// CSV/TSV → csv / tsv / text, one record at a time.
+/// CSV/TSV → csv / tsv / text / markdown, one record at a time.
 fn stream_records(in_path: &str, out_path: &str, tsv_in: bool, to: &str) -> CResult<Option<u64>> {
     let mut source = reader(in_path)?;
     let mut sink = writer(out_path)?;
     let mut bytes = 0usize;
+    let to_markdown = to == "markdown";
     let out_delim = match to {
         "tsv" => '\t',
         "csv" => ',',
-        // "text"
+        // "text", and anything the markdown branch does not use
         _ => {
             if tsv_in {
                 '\t'
@@ -206,7 +214,13 @@ fn stream_records(in_path: &str, out_path: &str, tsv_in: bool, to: &str) -> CRes
     let mut in_quotes = false;
     let mut record = String::new();
     let mut raw = String::new();
-    let write_record_text = |text: &str, sink: &mut BufWriter<File>| -> CResult<usize> {
+    // A markdown table has one width for every row, so a ragged file cannot
+    // be streamed into one without knowing the widest row up front: stop
+    // and let the whole-file path have it.
+    let mut width: Option<usize> = None;
+    let mut ragged = false;
+    let mut header_written = false;
+    let mut write_record_text = |text: &str, sink: &mut BufWriter<File>| -> CResult<usize> {
         let rows = if tsv_in {
             parse_tsv(text)?
         } else {
@@ -214,7 +228,23 @@ fn stream_records(in_path: &str, out_path: &str, tsv_in: bool, to: &str) -> CRes
         };
         let mut written = 0usize;
         for row in &rows {
-            let record = write_record(row, out_delim);
+            // Markdown needs a header separator after the very first row,
+            // which is exactly what `markdown::table` emits for one row.
+            let record = if to_markdown {
+                let expected = *width.get_or_insert(row.len());
+                if row.len() != expected {
+                    ragged = true;
+                    continue;
+                }
+                if !header_written {
+                    header_written = true;
+                    markdown::table(std::slice::from_ref(row))
+                } else {
+                    markdown::table_row(row)
+                }
+            } else {
+                write_record(row, out_delim)
+            };
             write(sink, &record)?;
             written += record.len();
         }
@@ -253,9 +283,142 @@ fn stream_records(in_path: &str, out_path: &str, tsv_in: bool, to: &str) -> CRes
         let text = std::mem::take(&mut record);
         bytes += write_record_text(&text, &mut sink)?;
     }
+    if ragged {
+        return Ok(None);
+    }
     sink.flush()
         .map_err(|e| (ERR_PLATFORM, format!("cannot write '{out_path}': {e}")))?;
     Ok(Some(bytes as u64))
+}
+
+/// markdown → csv / tsv, one block at a time.
+///
+/// The whole-file path wants exactly one table, optionally behind one
+/// heading, so the stream does too: a heading is skipped, a table is
+/// written record by record, and anything else is the same parse error the
+/// whole-document path raises.
+fn stream_markdown_rows(in_path: &str, out_path: &str, tsv_out: bool) -> CResult<Option<u64>> {
+    let mut source = reader(in_path)?;
+    let mut sink = writer(out_path)?;
+    let mut bytes = 0usize;
+    let mut block: Vec<String> = Vec::new();
+    let mut blanks = 0usize;
+    let mut in_fence = false;
+    let mut first = true;
+    let mut heading_seen = false;
+    let mut table_seen = false;
+    let mut raw = String::new();
+    loop {
+        raw.clear();
+        let read = source
+            .read_line(&mut raw)
+            .map_err(|e| (ERR_PLATFORM, format!("cannot read '{in_path}': {e}")))?;
+        if read == 0 {
+            break;
+        }
+        let line = raw.trim_end_matches(['\n', '\r']).to_string();
+        if in_fence {
+            block.push(line.clone());
+            if line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~") {
+                in_fence = false;
+            }
+            continue;
+        }
+        if line.trim().is_empty() {
+            blanks += 1;
+            continue;
+        }
+        if first {
+            // YAML front matter is document-wide: convert the whole file.
+            if line.trim_end() == "---" {
+                return Ok(None);
+            }
+            first = false;
+        }
+        if block.is_empty() {
+            block.push(line);
+            continue;
+        }
+        if blanks > 0 && !continues(&block, &line) {
+            match emit_rows(
+                &mut sink,
+                &block,
+                tsv_out,
+                &mut heading_seen,
+                &mut table_seen,
+            )? {
+                Some(written) => bytes += written,
+                None => return Ok(None),
+            }
+            block.clear();
+        } else {
+            for _ in 0..blanks {
+                block.push(String::new());
+            }
+        }
+        blanks = 0;
+        if line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~") {
+            in_fence = true;
+        }
+        block.push(line);
+    }
+    if !block.is_empty() {
+        match emit_rows(
+            &mut sink,
+            &block,
+            tsv_out,
+            &mut heading_seen,
+            &mut table_seen,
+        )? {
+            Some(written) => bytes += written,
+            None => return Ok(None),
+        }
+    }
+    sink.flush()
+        .map_err(|e| (ERR_PLATFORM, format!("cannot write '{out_path}': {e}")))?;
+    Ok(Some(bytes as u64))
+}
+
+/// One Markdown block → CSV/TSV records. `Ok(None)` means "this file needs
+/// the whole-document path".
+fn emit_rows(
+    sink: &mut BufWriter<File>,
+    block: &[String],
+    tsv_out: bool,
+    heading_seen: &mut bool,
+    table_seen: &mut bool,
+) -> CResult<Option<usize>> {
+    let text = block.join("\n");
+    if markdown::has_document_wide_constructs(&text) {
+        return Ok(None);
+    }
+    if text.trim_start().starts_with('#') && !*table_seen {
+        // The one heading the whole-file path tolerates.
+        if *heading_seen {
+            return Err((
+                ERR_CORRUPT,
+                "markdown→csv needs one table (and at most one heading before it)".to_string(),
+            ));
+        }
+        *heading_seen = true;
+        return Ok(Some(0));
+    }
+    if *table_seen {
+        return Err((
+            ERR_CORRUPT,
+            "markdown→csv needs one table (and at most one heading before it)".to_string(),
+        ));
+    }
+    let rows = markdown::markdown_rows(&text)?;
+    *table_seen = true;
+    let delim = if tsv_out { '\t' } else { ',' };
+    let mut written = 0usize;
+    for row in &rows {
+        let record = crate::csv::write_record(row, delim);
+        write(sink, &record)?;
+        written += record.len();
+    }
+    Ok(Some(written))
 }
 
 /// markdown → html / text, one block at a time, with a whole-document
@@ -437,6 +600,80 @@ mod tests {
             std::fs::read_to_string(&markdown).expect("read"),
             "one\ntwo\n\nthree\n"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The table pairs stream too, and a streamed table must be the same
+    /// bytes the whole-document path writes.
+    #[test]
+    fn table_pairs_stream_like_the_whole_file() {
+        let dir = scratch("tables");
+
+        // CSV → markdown: the first record becomes the header.
+        let csv_in = dir.join("in.csv");
+        let md = dir.join("out.md");
+        std::fs::write(&csv_in, "Name,Qty\nMilk,2\nBread,3\n").expect("write");
+        convert_file(
+            csv_in.to_str().unwrap(),
+            md.to_str().unwrap(),
+            Some("csv"),
+            Some("markdown"),
+        )
+        .expect("stream");
+        assert_eq!(
+            std::fs::read_to_string(&md).expect("read"),
+            "| Name | Qty |\n| --- | --- |\n| Milk | 2 |\n| Bread | 3 |\n"
+        );
+
+        // A ragged file cannot be a GFM table without knowing its widest
+        // row, so the stream hands it back: same output, just not streamed.
+        let ragged = dir.join("ragged.csv");
+        let ragged_out = dir.join("ragged.md");
+        std::fs::write(&ragged, "a,b\n1\n").expect("write");
+        convert_file(
+            ragged.to_str().unwrap(),
+            ragged_out.to_str().unwrap(),
+            Some("csv"),
+            Some("markdown"),
+        )
+        .expect("fallback");
+        assert_eq!(
+            std::fs::read_to_string(&ragged_out).expect("read"),
+            "| a | b |\n| --- | --- |\n| 1 |  |\n"
+        );
+
+        // Markdown → CSV: one heading may precede the table.
+        let doc = dir.join("doc.md");
+        let out_csv = dir.join("doc.csv");
+        std::fs::write(
+            &doc,
+            "# Totals\n\n| Name | Qty |\n| --- | --- |\n| Milk | 2 |\n",
+        )
+        .expect("write");
+        convert_file(
+            doc.to_str().unwrap(),
+            out_csv.to_str().unwrap(),
+            Some("markdown"),
+            Some("csv"),
+        )
+        .expect("stream");
+        assert_eq!(
+            std::fs::read_to_string(&out_csv).expect("read"),
+            "Name,Qty\r\nMilk,2\r\n"
+        );
+
+        // Two tables are what the whole-file path refuses, so it refuses too.
+        let two = dir.join("two.md");
+        std::fs::write(&two, "| a |\n| --- |\n| 1 |\n\n| b |\n| --- |\n| 2 |\n").expect("write");
+        let two_out = dir.join("two.csv");
+        let error = convert_file(
+            two.to_str().unwrap(),
+            two_out.to_str().unwrap(),
+            Some("markdown"),
+            Some("csv"),
+        )
+        .expect_err("two tables");
+        assert_eq!(error.0, ERR_CORRUPT);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -12,8 +12,9 @@
 //! `<<xref,text>>`.
 //!
 //! Like `rst`, everything lands as Markdown first, so every target
-//! agrees with the others about what the document says. Tables (`,|===`)
-//! are out of scope, as in the rST reader.
+//! agrees with the others about what the document says. `|===` tables
+//! become GFM tables, with `2+`/`.2+` spans and style prefixes flattened
+//! the way the rST reader flattens its grid spans.
 
 use crate::CResult;
 
@@ -80,7 +81,16 @@ pub fn to_markdown(input: &str) -> CResult<String> {
         // header (the shape GFM tables have).
         if line.trim() == "|===" {
             flush(&mut blocks, &mut paragraph);
-            let (rendered, consumed) = render_table(&lines[i..]);
+            // The block attribute (`[cols="1,1"]`, `[%header]`) was consumed
+            // by the bracket branch above but is still in `lines`.
+            let attribute = i
+                .checked_sub(1)
+                .and_then(|prev| lines.get(prev))
+                .and_then(|line| {
+                    let trimmed = line.trim();
+                    (trimmed.starts_with('[') && trimmed.ends_with(']')).then_some(trimmed)
+                });
+            let (rendered, consumed) = render_table(&lines[i..], attribute);
             if !rendered.is_empty() {
                 blocks.push(rendered.trim_end().to_string());
             }
@@ -280,32 +290,210 @@ fn render_delimited(lines: &[&str], kind: Delimiter, language: &str) -> (String,
     (rendered, i)
 }
 
-fn render_table(lines: &[&str]) -> (String, usize) {
-    let mut rows: Vec<Vec<String>> = Vec::new();
+/// A `|===` table. Cells may wrap across lines, span columns (`2+|`) or
+/// rows (`.2+|`), and carry a style prefix (`a|`, `h|`, `l|`) — the styles
+/// are dropped because GFM has no per-cell formatting, and the spans are
+/// flattened: the text sits in the cell where it starts and the cells it
+/// covers stay empty.
+fn render_table(lines: &[&str], attribute: Option<&str>) -> (String, usize) {
     let mut i = 1usize;
+    let mut body = String::new();
     while i < lines.len() {
-        let line = lines[i];
-        if line.trim() == "|===" {
+        if lines[i].trim() == "|===" {
             i += 1;
             break;
         }
-        if line.trim().is_empty() {
-            i += 1;
-            continue;
-        }
-        let cells: Vec<String> = line
-            .trim()
-            .trim_start_matches('|')
-            .split('|')
-            .map(|cell| cell.trim().to_string())
-            .filter(|cell| !cell.is_empty())
-            .collect();
-        if !cells.is_empty() {
-            rows.push(cells);
-        }
+        body.push_str(lines[i]);
+        body.push('\n');
         i += 1;
     }
-    (crate::markdown::table(&rows), i)
+    let cells = parse_cells(&body);
+    if cells.is_empty() {
+        return (String::new(), i);
+    }
+    let columns = column_count(attribute)
+        .unwrap_or_else(|| first_line_cells(&body))
+        .max(1);
+    (crate::markdown::table(&layout_cells(cells, columns)), i)
+}
+
+/// One cell as written: its text, and what it covers.
+struct Cell {
+    text: String,
+    colspan: usize,
+    rowspan: usize,
+}
+
+/// Split the body into cells at every `|`, reading the specifier that sits
+/// just before each wall (`2+`, `.3+`, `a`, `hl+`, or nothing).
+fn parse_cells(body: &str) -> Vec<Cell> {
+    let chars: Vec<char> = body.chars().collect();
+    // Every wall, plus where the specifier in front of it begins.
+    let mut walls: Vec<(usize, usize, usize, usize)> = Vec::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        if chars[index] != '|' {
+            index += 1;
+            continue;
+        }
+        let mut spec_start = index;
+        while spec_start > 0 && is_spec_char(chars[spec_start - 1]) {
+            spec_start -= 1;
+        }
+        // Only a run that starts a token is a specifier: `red|` is text.
+        let starts_token = spec_start == 0 || chars[spec_start - 1].is_whitespace();
+        let (start, colspan, rowspan) = if starts_token {
+            let spec: String = chars[spec_start..index].iter().collect();
+            let (colspan, rowspan) = parse_span(&spec);
+            (spec_start, colspan, rowspan)
+        } else {
+            (index, 1, 1)
+        };
+        walls.push((index, start, colspan, rowspan));
+        index += 1;
+    }
+    let mut cells = Vec::with_capacity(walls.len());
+    for (position, &(wall, _, colspan, rowspan)) in walls.iter().enumerate() {
+        let from = wall + 1;
+        let to = walls
+            .get(position + 1)
+            .map(|next| next.1)
+            .unwrap_or(chars.len())
+            .max(from);
+        let text: String = chars[from..to].iter().collect();
+        cells.push(Cell {
+            text: collapse(&text),
+            colspan,
+            rowspan,
+        });
+    }
+    cells
+}
+
+fn is_spec_char(c: char) -> bool {
+    c.is_ascii_digit() || matches!(c, '.' | '+' | 'a' | 'd' | 'e' | 'h' | 'l' | 'm' | 's')
+}
+
+/// `2+` is two columns, `.3+` three rows; a bare style prefix (`a`, `hl`)
+/// covers nothing.
+fn parse_span(spec: &str) -> (usize, usize) {
+    let mut colspan = 1usize;
+    let mut rowspan = 1usize;
+    let chars: Vec<char> = spec.chars().collect();
+    let mut index = 0usize;
+    let mut digits = String::new();
+    while index < chars.len() && chars[index].is_ascii_digit() {
+        digits.push(chars[index]);
+        index += 1;
+    }
+    if !digits.is_empty() {
+        colspan = digits.parse().unwrap_or(1);
+    }
+    if chars.get(index) == Some(&'.') {
+        index += 1;
+        let mut digits = String::new();
+        while index < chars.len() && chars[index].is_ascii_digit() {
+            digits.push(chars[index]);
+            index += 1;
+        }
+        if !digits.is_empty() {
+            rowspan = digits.parse().unwrap_or(1);
+        }
+    }
+    (colspan.max(1), rowspan.max(1))
+}
+
+/// The column count a `cols="1,2,3"` attribute asks for (`3*` is three).
+fn column_count(attribute: Option<&str>) -> Option<usize> {
+    let attribute = attribute?;
+    let start = attribute.find("cols")? + 4;
+    let rest = &attribute[start..];
+    let rest = rest.trim_start_matches(['=', ' ']);
+    let rest = rest.trim_start_matches('"');
+    let end = rest.find('"').unwrap_or(rest.len());
+    let spec = &rest[..end];
+    let mut total = 0usize;
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        match part.strip_suffix('*') {
+            Some(count) => total += count.trim().parse::<usize>().unwrap_or(0),
+            None => total += 1,
+        }
+    }
+    (total > 0).then_some(total)
+}
+
+fn first_line_cells(body: &str) -> usize {
+    body.lines()
+        .map(|line| line.matches('|').count())
+        .find(|count| *count > 0)
+        .unwrap_or(1)
+}
+
+/// Place cells left to right, wrapping at the column count. A cell that
+/// spans columns takes the ones beside it; a cell that spans rows reserves
+/// those columns below, so the next row's cells step around it — and every
+/// covered position stays empty because GFM has no spans.
+fn layout_cells(cells: Vec<Cell>, columns: usize) -> Vec<Vec<String>> {
+    let columns = columns.max(1);
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut reserved: Vec<Vec<bool>> = Vec::new();
+    let mut row = 0usize;
+    let mut column = 0usize;
+    for cell in cells {
+        ensure(&mut rows, &mut reserved, row, columns);
+        while column < columns && reserved[row][column] {
+            column += 1;
+        }
+        if column >= columns {
+            row += 1;
+            column = 0;
+            ensure(&mut rows, &mut reserved, row, columns);
+            while column < columns && reserved[row][column] {
+                column += 1;
+            }
+        }
+        let colspan = cell.colspan.min(columns - column);
+        rows[row][column] = collapse(&cell.text);
+        for covered in column + 1..column + colspan {
+            rows[row][covered].clear();
+        }
+        for extra in 1..cell.rowspan.max(1) {
+            ensure(&mut rows, &mut reserved, row + extra, columns);
+            reserved[row + extra][column] = true;
+            rows[row + extra][column].clear();
+        }
+        column += colspan;
+        if column >= columns {
+            row += 1;
+            column = 0;
+        }
+    }
+    // A trailing row can be empty because a row span covered it; only the
+    // blank tail is dropped.
+    while rows
+        .last()
+        .is_some_and(|line| line.iter().all(|cell| cell.is_empty()))
+    {
+        rows.pop();
+    }
+    rows
+}
+
+fn ensure(rows: &mut Vec<Vec<String>>, reserved: &mut Vec<Vec<bool>>, row: usize, columns: usize) {
+    while rows.len() <= row {
+        rows.push(vec![String::new(); columns]);
+        reserved.push(vec![false; columns]);
+    }
+}
+
+/// A cell's text is one line in the table: whitespace, including the line
+/// breaks a wrapped cell was written across, collapses.
+fn collapse(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn section(line: &str) -> Option<(usize, &str)> {
@@ -592,6 +780,35 @@ mod tests {
         assert!(md.contains("[the site](https://example.com)"), "{md}");
         let html = convert_markdown(&md, Flavor::Html).unwrap();
         assert!(html.contains("<strong>strong</strong>"), "{html}");
+    }
+
+    #[test]
+    fn table_spans_styles_and_wrapped_cells() {
+        let spanning = "|===\n| A | B | C\n2+|across two |C2\n|===\n";
+        assert_eq!(
+            to_markdown(spanning).unwrap(),
+            "| A | B | C |\n| --- | --- | --- |\n| across two |  | C2 |\n"
+        );
+
+        let tall = "|===\n| a | b\n.2+|tall |one\n|two\n|===\n";
+        assert_eq!(
+            to_markdown(tall).unwrap(),
+            "| a | b |\n| --- | --- |\n| tall | one |\n|  | two |\n"
+        );
+
+        // A style prefix changes nothing about the text or the columns.
+        let styled = "[cols=\"1,1\"]\n|===\n| Name | Qty\na|Milk | 2\n|===\n";
+        assert_eq!(
+            to_markdown(styled).unwrap(),
+            "| Name | Qty |\n| --- | --- |\n| Milk | 2 |\n"
+        );
+
+        // A cell may be written across several lines.
+        let wrapped = "|===\n| a | b\n  continued | e\n|===\n";
+        assert_eq!(
+            to_markdown(wrapped).unwrap(),
+            "| a | b continued |\n| --- | --- |\n| e |  |\n"
+        );
     }
 
     #[test]
