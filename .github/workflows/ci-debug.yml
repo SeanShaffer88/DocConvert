@@ -22,5 +22,7 @@ jobs:
         run: |
           cargo test --locked > t.txt 2>&1
           code=$?
-          grep -n "panicked at" -A 14 t.txt | head -160 | while IFS= read -r line; do echo "::error::$line"; done
+          grep -n "panicked at" -A 14 t.txt | head -120 | while IFS= read -r line; do echo "::error::P $line"; done
+          grep -n "^failures:" -A 20 t.txt | head -60 | while IFS= read -r line; do echo "::error::F $line"; done
+          tail -25 t.txt | while IFS= read -r line; do echo "::error::T $line"; done
           exit $code
