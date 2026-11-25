@@ -93,7 +93,7 @@ fn finish_code(run: Result<Result<(), (i32, String)>, (i32, String)>) -> c_int {
 
 #[no_mangle]
 pub extern "C" fn dc_version() -> *const c_char {
-    static VERSION_C: &[u8] = b"0.1.0\0";
+    static VERSION_C: &[u8] = b"0.2.0\0";
     VERSION_C.as_ptr() as *const c_char
 }
 
@@ -149,6 +149,24 @@ pub extern "C" fn dc_formats_json() -> *mut c_char {
     }))
 }
 
+fn convert_impl(
+    input: *const c_char,
+    from_format: *const c_char,
+    to_format: *const c_char,
+    options_json: *const c_char,
+) -> *mut c_char {
+    finish_str(guard(|| {
+        let input = req_str(input, "input")?;
+        let from = req_str(from_format, "from_format")?;
+        let to = req_str(to_format, "to_format")?;
+        let options = match opt_str(options_json)? {
+            Some(text) => convert::Options::from_json(&text)?,
+            None => convert::Options::default(),
+        };
+        convert::convert_with_options(&input, &from, &to, &options)
+    }))
+}
+
 /// Convert text between formats ("markdown"/"md", "html", "csv",
 /// "json", "text"/"txt"). Returns the converted string or null.
 /// # Safety (caller contract): all pointers are valid C strings.
@@ -159,12 +177,21 @@ pub extern "C" fn dc_convert(
     from_format: *const c_char,
     to_format: *const c_char,
 ) -> *mut c_char {
-    finish_str(guard(|| {
-        let input = req_str(input, "input")?;
-        let from = req_str(from_format, "from_format")?;
-        let to = req_str(to_format, "to_format")?;
-        convert::convert(&input, &from, &to)
-    }))
+    convert_impl(input, from_format, to_format, std::ptr::null())
+}
+
+/// `dc_convert` with an options object as JSON, e.g.
+/// `{"front_matter":"table"}`. A null or empty string means defaults.
+/// # Safety (caller contract): pointers are null or valid C strings.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn dc_convert_opts(
+    input: *const c_char,
+    from_format: *const c_char,
+    to_format: *const c_char,
+    options_json: *const c_char,
+) -> *mut c_char {
+    convert_impl(input, from_format, to_format, options_json)
 }
 
 /// Convert a file. Formats come from the explicit arguments when
@@ -178,6 +205,30 @@ pub extern "C" fn dc_convert_file(
     out_path: *const c_char,
     from_format: *const c_char,
     to_format: *const c_char,
+) -> c_int {
+    convert_file_impl(in_path, out_path, from_format, to_format, std::ptr::null())
+}
+
+/// `dc_convert_file` with an options object as JSON.
+/// # Safety (caller contract): pointers are null or valid C strings.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn dc_convert_file_opts(
+    in_path: *const c_char,
+    out_path: *const c_char,
+    from_format: *const c_char,
+    to_format: *const c_char,
+    options_json: *const c_char,
+) -> c_int {
+    convert_file_impl(in_path, out_path, from_format, to_format, options_json)
+}
+
+fn convert_file_impl(
+    in_path: *const c_char,
+    out_path: *const c_char,
+    from_format: *const c_char,
+    to_format: *const c_char,
+    options_json: *const c_char,
 ) -> c_int {
     finish_code(guard(|| {
         let in_path = req_str(in_path, "in_path")?;
@@ -203,36 +254,40 @@ pub extern "C" fn dc_convert_file(
                 format!("'{in_path}' is not valid UTF-8 text"),
             )
         })?;
-        let converted = convert::convert(&text, &from, &to)?;
+        let options = match opt_str(options_json)? {
+            Some(text) => convert::Options::from_json(&text)?,
+            None => convert::Options::default(),
+        };
+        let converted = convert::convert_with_options(&text, &from, &to, &options)?;
         crate::platform::write_file(&out_path, converted.as_bytes())
     }))
 }
 
-/// JSON list of the {from,to} pairs supported in v0.1.
+/// JSON list of the `{from,to}` pairs this build supports — the same
+/// table `convert` dispatches from.
 #[no_mangle]
 pub extern "C" fn dc_matrix_json() -> *mut c_char {
     finish_str(guard(|| {
-        let pairs: &[(&str, &str)] = &[
-            ("markdown", "html"),
-            ("markdown", "text"),
-            ("html", "markdown"),
-            ("html", "text"),
-            ("text", "html"),
-            ("text", "markdown"),
-            ("csv", "json"),
-            ("json", "csv"),
-            ("csv", "markdown"),
-            ("csv", "html"),
-            ("csv", "text"),
-            ("json", "text"),
-            ("json", "html"),
-            ("json", "markdown"),
-        ];
-        let items: Vec<String> = pairs
+        let items: Vec<String> = convert::MATRIX
             .iter()
-            .map(|(f, t)| format!("{{\"from\":\"{f}\",\"to\":\"{t}\"}}"))
+            .map(|(from, to)| format!("{{\"from\":\"{from}\",\"to\":\"{to}\"}}"))
             .collect();
         Ok(format!("[{}]", items.join(",")))
+    }))
+}
+
+/// The YAML front matter of a Markdown document as a JSON object
+/// (`{}` when there is none or it is malformed). Mirrors
+/// `dc_convert_opts`'s `front_matter` handling without converting.
+#[no_mangle]
+pub extern "C" fn dc_front_matter_json(input: *const c_char) -> *mut c_char {
+    finish_str(guard(|| {
+        let input = req_str(input, "input")?;
+        let (front, _body) = crate::frontmatter::split(&input);
+        Ok(match front {
+            Some(front) => front.to_json().to_compact(),
+            None => "{}".to_string(),
+        })
     }))
 }
 
@@ -272,5 +327,83 @@ mod tests {
             s.contains("\"markdown\",\"to\":\"html\"") || s.contains("\"from\":\"markdown\""),
             "{s}"
         );
+    }
+
+    /// Own and free a returned string, failing loudly with the
+    /// thread-local error when the call returned null.
+    fn take(p: *mut c_char) -> String {
+        assert!(!p.is_null());
+        let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
+        dc_free_string(p);
+        s
+    }
+
+    #[test]
+    fn opts_and_front_matter() {
+        let doc = cs("---\ntitle: Release\ndraft: true\n---\n# Body\n");
+        let html = take(dc_convert(
+            doc.as_ptr(),
+            cs("md").as_ptr(),
+            cs("html").as_ptr(),
+        ));
+        assert_eq!(html, "<h1>Body</h1>");
+        let html = take(dc_convert_opts(
+            doc.as_ptr(),
+            cs("md").as_ptr(),
+            cs("html").as_ptr(),
+            cs("{\"front_matter\":\"table\"}").as_ptr(),
+        ));
+        assert!(html.contains("<td>Release</td>"), "{html}");
+        // Unknown options fail with INVALID_ARG instead of being ignored.
+        let bad = dc_convert_opts(
+            doc.as_ptr(),
+            cs("md").as_ptr(),
+            cs("html").as_ptr(),
+            cs("{\"nope\":1}").as_ptr(),
+        );
+        assert!(bad.is_null());
+        assert_eq!(dc_last_error_code(), crate::ERR_INVALID_ARG);
+        // Front matter is readable without converting anything.
+        let json = take(dc_front_matter_json(doc.as_ptr()));
+        assert_eq!(json, "{\"title\":\"Release\",\"draft\":true}");
+        assert_eq!(take(dc_front_matter_json(cs("# Hi\n").as_ptr())), "{}");
+    }
+
+    #[test]
+    fn matrix_json_matches_the_table() {
+        let mut from_keys = Vec::new();
+        let mut to_keys = Vec::new();
+        match crate::json::parse_json(&take(dc_matrix_json())).unwrap() {
+            crate::json::Json::Array(items) => {
+                for item in items {
+                    match item {
+                        crate::json::Json::Object(entries) => {
+                            for (key, value) in entries {
+                                let text = match value {
+                                    crate::json::Json::Str(s) => s,
+                                    _ => panic!("matrix values must be strings"),
+                                };
+                                match key.as_str() {
+                                    "from" => from_keys.push(text),
+                                    "to" => to_keys.push(text),
+                                    other => panic!("unexpected matrix key {other}"),
+                                }
+                            }
+                        }
+                        _ => panic!("matrix entries must be objects"),
+                    }
+                }
+            }
+            _ => panic!("matrix must be a JSON array"),
+        }
+        assert_eq!(from_keys.len(), convert::MATRIX.len());
+        for (from, to) in from_keys.iter().zip(to_keys.iter()) {
+            assert!(
+                convert::MATRIX
+                    .iter()
+                    .any(|(f, t)| *f == from.as_str() && *t == to.as_str()),
+                "{from}→{to} is not in convert::MATRIX"
+            );
+        }
     }
 }

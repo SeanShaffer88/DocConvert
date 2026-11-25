@@ -1,9 +1,18 @@
-/* DocConvert.dll — document conversion behind one clean C ABI:
+/* DocConvert.dll v0.2.0 — document conversion behind one clean C ABI:
  * Markdown, HTML, CSV, JSON, and plain text. All strings UTF-8,
  * NUL-terminated. char* results are caller-owned: free with
  * dc_free_string(). Format names: "markdown"/"md", "html",
  * "csv", "json", "text"/"txt". The supported conversion pairs are
- * enumerable at runtime with dc_matrix_json(). */
+ * enumerable at runtime with dc_matrix_json().
+ *
+ * Options (dc_convert_opts / dc_convert_file_opts) are a JSON object;
+ * NULL or "" means "use the defaults". Recognised keys:
+ *   "front_matter": "strip" (default) | "table"
+ *     What md->html and md->text do with a YAML front matter block:
+ *     drop it, or render it as a key/value table.
+ * Unknown keys or values fail with DC_ERR_INVALID_ARG rather than
+ * being ignored.
+ */
 #ifndef DOCCONVERT_H
 #define DOCCONVERT_H
 #include <stdint.h>
@@ -38,8 +47,16 @@ DC_API void dc_free_string(char *p);
 DC_API char *dc_formats_json(void); /* ["markdown","html","csv","json","text"] */
 DC_API char *dc_matrix_json(void);  /* [{"from":...,"to":...}, ...] */
 DC_API char *dc_convert(const char *input, const char *from_format, const char *to_format);
+DC_API char *dc_convert_opts(const char *input, const char *from_format,
+                             const char *to_format, const char *options_json);
+/* The YAML front matter of a Markdown document as a JSON object;
+ * "{}" when there is none (or it is malformed). */
+DC_API char *dc_front_matter_json(const char *input);
 DC_API int dc_convert_file(const char *in_path, const char *out_path,
                            const char *from_format, const char *to_format); /* NULL format = by extension */
+DC_API int dc_convert_file_opts(const char *in_path, const char *out_path,
+                                const char *from_format, const char *to_format,
+                                const char *options_json);
 
 #ifdef __cplusplus
 }

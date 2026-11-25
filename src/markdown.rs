@@ -2,12 +2,19 @@
 //!
 //! Covers the CommonMark constructs documents actually use: ATX and
 //! setext headings, paragraphs, emphasis/strong/strikethrough, code
-//! spans and fenced blocks, links and images, autolinks, blockquotes,
-//! ordered/unordered lists with nesting, horizontal rules, and GFM
-//! pipe tables. Raw HTML inside Markdown is escaped, not passed
-//! through (documented: the output is meant to be safe by default).
+//! spans and fenced blocks, inline and reference links/images,
+//! autolinks, blockquotes, ordered/unordered lists with nesting,
+//! horizontal rules, and GFM pipe tables. Raw HTML inside Markdown is
+//! escaped, not passed through (documented: the output is meant to be
+//! safe by default).
+
+use std::collections::HashMap;
 
 use crate::{escape_html, CResult};
+
+/// Link reference definitions, keyed by normalized label:
+/// `[docs]: https://example.com "Title"` → `"docs"` → `(url, title)`.
+pub type Refs = HashMap<String, (String, String)>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Flavor {
@@ -16,9 +23,13 @@ pub enum Flavor {
 }
 
 pub fn convert_markdown(input: &str, flavor: Flavor) -> CResult<String> {
-    let lines: Vec<&str> = input.lines().collect();
+    let (refs, lines) = collect_definitions(input);
+    let lines: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let blocks = parse_blocks(&lines);
-    let rendered: Vec<String> = blocks.iter().map(|b| render_block(b, flavor)).collect();
+    let rendered: Vec<String> = blocks
+        .iter()
+        .map(|b| render_block(b, flavor, &refs))
+        .collect();
     let sep = match flavor {
         Flavor::Html => "\n",
         Flavor::Text => "\n\n",
@@ -28,6 +39,91 @@ pub fn convert_markdown(input: &str, flavor: Flavor) -> CResult<String> {
         out.push('\n');
     }
     Ok(out)
+}
+
+/// Normalize a reference label the CommonMark way: trim, collapse
+/// internal whitespace, case-fold.
+pub fn normalize_label(label: &str) -> String {
+    let mut out = String::with_capacity(label.len());
+    let mut pending_space = false;
+    for c in label.trim().chars() {
+        if c.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space && !out.is_empty() {
+            out.push(' ');
+        }
+        pending_space = false;
+        out.push(c);
+    }
+    out.to_lowercase()
+}
+
+/// Pull `[label]: url "title"` lines out of the document (fenced code
+/// is left alone) and hand back the remaining lines. Definitions are
+/// document-wide in CommonMark, so this runs before block parsing.
+fn collect_definitions(input: &str) -> (Refs, Vec<String>) {
+    let mut refs = Refs::new();
+    let mut kept: Vec<String> = Vec::new();
+    let mut in_fence = false;
+    for line in input.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            kept.push(line.to_string());
+            continue;
+        }
+        if !in_fence {
+            if let Some((label, url, title)) = parse_definition(line) {
+                refs.entry(normalize_label(&label)).or_insert((url, title));
+                continue;
+            }
+        }
+        kept.push(line.to_string());
+    }
+    (refs, kept)
+}
+
+/// `[label]: https://example.com "Title"` with up to three spaces of
+/// indentation. Returns `(label, url, title)`.
+fn parse_definition(line: &str) -> Option<(String, String, String)> {
+    let indent = line.len() - line.trim_start().len();
+    if indent > 3 {
+        return None;
+    }
+    let text = line.trim();
+    let rest = text.strip_prefix('[')?;
+    let close = rest.find("]:")?;
+    let label = rest[..close].trim();
+    if label.is_empty() || label.contains('[') || label.contains(']') {
+        return None;
+    }
+    let after = rest[close + 2..].trim();
+    if after.is_empty() {
+        return None;
+    }
+    let (url, title) = if let Some(stripped) = after.strip_prefix('<') {
+        let end = stripped.find('>')?;
+        let title = after[end + 2..].trim();
+        (stripped[..end].to_string(), title.to_string())
+    } else {
+        match after.find(char::is_whitespace) {
+            Some(w) => (after[..w].to_string(), after[w..].trim().to_string()),
+            None => (after.to_string(), String::new()),
+        }
+    };
+    if url.is_empty() {
+        return None;
+    }
+    let title = title
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_matches('(')
+        .trim_matches(')')
+        .to_string();
+    Some((label.to_string(), url, title))
 }
 
 #[derive(Debug, Clone)]
@@ -208,7 +304,7 @@ fn split_row(line: &str) -> Vec<String> {
 /// Returns (ordered, marker width incl. following space) for a list
 /// item line at any indent.
 fn list_marker(line: &str) -> Option<(bool, usize, usize)> {
-    let indent = line.len() - line.trim_start().len();
+    let indent = line_indent(line);
     if indent > 3 {
         return None;
     }
@@ -238,6 +334,33 @@ fn list_marker(line: &str) -> Option<(bool, usize, usize)> {
     }
 }
 
+/// Byte offset just past the leading whitespace — always a character
+/// boundary, unlike `line.len() - line.trim_start().len()`.
+fn line_indent(line: &str) -> usize {
+    let mut offset = 0;
+    for (i, c) in line.char_indices() {
+        if !c.is_whitespace() {
+            return i;
+        }
+        offset = i + c.len_utf8();
+    }
+    offset
+}
+
+/// Slice a line from a byte column, snapping forward to a character
+/// boundary: `l[cut..]` would panic on a line indented with non-ASCII
+/// whitespace.
+fn tail_from(line: &str, column: usize) -> String {
+    if line.len() <= column {
+        return String::new();
+    }
+    let mut cut = column;
+    while cut < line.len() && !line.is_char_boundary(cut) {
+        cut += 1;
+    }
+    line[cut..].to_string()
+}
+
 fn parse_list(lines: &[&str], start: usize) -> (Block, usize) {
     let (ordered, base_indent, _) = list_marker(lines[start]).unwrap();
     let mut items: Vec<Vec<String>> = Vec::new();
@@ -247,18 +370,14 @@ fn parse_list(lines: &[&str], start: usize) -> (Block, usize) {
         match list_marker(line) {
             Some((o, indent, marker_w)) if o == ordered && indent == base_indent => {
                 let content_col = indent + marker_w;
-                let first = if line.len() >= content_col {
-                    line[content_col..].to_string()
-                } else {
-                    String::new()
-                };
+                let first = tail_from(line, content_col);
                 items.push(vec![first]);
                 i += 1;
                 // Continuation lines: blank, or indented to the
                 // content column, or a nested list marker.
                 while i < lines.len() {
                     let l = lines[i];
-                    let l_indent = l.len() - l.trim_start().len();
+                    let l_indent = line_indent(l);
                     if l.trim().is_empty() {
                         // Look ahead: blank ends the list unless the
                         // next line belongs to an item.
@@ -279,7 +398,7 @@ fn parse_list(lines: &[&str], start: usize) -> (Block, usize) {
                     }
                     if l_indent >= content_col || list_marker(l).is_some() {
                         let cut = content_col.min(l_indent);
-                        items.last_mut().unwrap().push(l[cut..].to_string());
+                        items.last_mut().unwrap().push(tail_from(l, cut));
                         i += 1;
                         continue;
                     }
@@ -300,14 +419,19 @@ fn parse_list(lines: &[&str], start: usize) -> (Block, usize) {
     (Block::List(ordered, item_blocks), consumed)
 }
 
-fn render_block(b: &Block, flavor: Flavor) -> String {
+fn render_block(b: &Block, flavor: Flavor, refs: &Refs) -> String {
     match (b, flavor) {
         (Block::Heading(level, text), Flavor::Html) => {
-            format!("<h{level}>{}</h{level}>", inline(text, flavor))
+            format!(
+                "<h{level}>{}</h{level}>",
+                inline_with_refs(text, flavor, refs)
+            )
         }
-        (Block::Heading(_, text), Flavor::Text) => inline(text, flavor),
-        (Block::Paragraph(text), Flavor::Html) => format!("<p>{}</p>", inline(text, flavor)),
-        (Block::Paragraph(text), Flavor::Text) => inline(text, flavor),
+        (Block::Heading(_, text), Flavor::Text) => inline_with_refs(text, flavor, refs),
+        (Block::Paragraph(text), Flavor::Html) => {
+            format!("<p>{}</p>", inline_with_refs(text, flavor, refs))
+        }
+        (Block::Paragraph(text), Flavor::Text) => inline_with_refs(text, flavor, refs),
         (Block::Code(info, body), Flavor::Html) => {
             let class = if info.is_empty() {
                 String::new()
@@ -321,11 +445,17 @@ fn render_block(b: &Block, flavor: Flavor) -> String {
         }
         (Block::Code(_, body), Flavor::Text) => body.trim_end_matches('\n').to_string(),
         (Block::Quote(inner), Flavor::Html) => {
-            let inside: Vec<String> = inner.iter().map(|x| render_block(x, flavor)).collect();
+            let inside: Vec<String> = inner
+                .iter()
+                .map(|x| render_block(x, flavor, refs))
+                .collect();
             format!("<blockquote>\n{}\n</blockquote>", inside.join("\n"))
         }
         (Block::Quote(inner), Flavor::Text) => {
-            let inside: Vec<String> = inner.iter().map(|x| render_block(x, flavor)).collect();
+            let inside: Vec<String> = inner
+                .iter()
+                .map(|x| render_block(x, flavor, refs))
+                .collect();
             inside
                 .join("\n\n")
                 .lines()
@@ -341,7 +471,7 @@ fn render_block(b: &Block, flavor: Flavor) -> String {
                     for item in items {
                         out.push_str("\n<li>");
                         let parts: Vec<String> =
-                            item.iter().map(|x| render_block(x, flavor)).collect();
+                            item.iter().map(|x| render_block(x, flavor, refs)).collect();
                         // Tight rendering: strip the single <p> wrap.
                         let joined = parts.join("\n");
                         let joined = joined
@@ -363,7 +493,7 @@ fn render_block(b: &Block, flavor: Flavor) -> String {
                             "- ".into()
                         };
                         let parts: Vec<String> =
-                            item.iter().map(|x| render_block(x, flavor)).collect();
+                            item.iter().map(|x| render_block(x, flavor, refs)).collect();
                         out.push_str(&marker);
                         out.push_str(&parts.join("\n  "));
                         out.push('\n');
@@ -380,7 +510,7 @@ fn render_block(b: &Block, flavor: Flavor) -> String {
                 out.push_str(&format!(
                     "<th{}>{}</th>",
                     align_attr(aligns.get(j)),
-                    inline(h, flavor)
+                    inline_with_refs(h, flavor, refs)
                 ));
             }
             out.push_str("</tr>\n</thead>\n<tbody>");
@@ -390,7 +520,7 @@ fn render_block(b: &Block, flavor: Flavor) -> String {
                     out.push_str(&format!(
                         "<td{}>{}</td>",
                         align_attr(aligns.get(j)),
-                        inline(cell, flavor)
+                        inline_with_refs(cell, flavor, refs)
                     ));
                 }
                 out.push_str("</tr>");
@@ -420,21 +550,29 @@ fn align_attr(a: Option<&char>) -> &'static str {
 /// Inline renderer: emphasis, strong, strike, code spans, links,
 /// images, autolinks; everything else is literal text.
 pub fn inline(text: &str, flavor: Flavor) -> String {
+    inline_with_refs(text, flavor, &Refs::new())
+}
+
+/// `inline`, with the document's link reference definitions available
+/// (needed for `[label][ref]`, `[label][]`, and `[label]` links).
+pub fn inline_with_refs(text: &str, flavor: Flavor, refs: &Refs) -> String {
     InlineParser {
         chars: text.chars().collect(),
         pos: 0,
         flavor,
+        refs,
     }
     .run()
 }
 
-struct InlineParser {
+struct InlineParser<'a> {
     chars: Vec<char>,
     pos: usize,
     flavor: Flavor,
+    refs: &'a Refs,
 }
 
-impl InlineParser {
+impl<'a> InlineParser<'a> {
     fn run(&mut self) -> String {
         let mut out = String::new();
         self.parse_into(&mut out, None);
@@ -626,7 +764,9 @@ impl InlineParser {
             .find(|&i| self.chars[i..].starts_with(&needle_chars[..]))
     }
 
-    /// At '[' (link) or '![' (image). Consumes through ')' on success.
+    /// At '[' (link) or '![' (image). Consumes an inline link
+    /// `[label](dest "title")`, a reference link `[label][ref]`,
+    /// `[label][]`, or `[label]`, or the image forms of each.
     fn try_link(&mut self, out: &mut String, image: bool) -> bool {
         let save = self.pos;
         self.pos += if image { 2 } else { 1 };
@@ -648,14 +788,71 @@ impl InlineParser {
             }
             j += 1;
         }
-        if depth != 0 || self.chars.get(j + 1) != Some(&'(') {
+        if depth != 0 {
             self.pos = save;
             return false;
         }
         let label: String = self.chars[label_start..j].iter().collect();
-        // Destination until the matching ')'.
-        let dest_start = j + 2;
-        let mut k = dest_start;
+        match self.chars.get(j + 1) {
+            Some('(') => match self.inline_destination(j + 2) {
+                Some((url, after)) => {
+                    self.pos = after;
+                    self.emit_link(out, &label, &url, image);
+                    true
+                }
+                None => {
+                    self.pos = save;
+                    false
+                }
+            },
+            Some('[') => {
+                let mut k = j + 2;
+                while k < self.chars.len() && self.chars[k] != ']' {
+                    k += 1;
+                }
+                if k >= self.chars.len() {
+                    self.pos = save;
+                    return false;
+                }
+                let explicit: String = self.chars[j + 2..k].iter().collect();
+                let key = if explicit.trim().is_empty() {
+                    normalize_label(&label)
+                } else {
+                    normalize_label(&explicit)
+                };
+                match self.refs.get(&key).cloned() {
+                    Some((url, _title)) => {
+                        self.pos = k + 1;
+                        self.emit_link(out, &label, &url, image);
+                        true
+                    }
+                    None => {
+                        self.pos = save;
+                        false
+                    }
+                }
+            }
+            _ => {
+                // Shortcut reference: [label] with a matching definition.
+                match self.refs.get(&normalize_label(&label)).cloned() {
+                    Some((url, _title)) => {
+                        self.pos = j + 1;
+                        self.emit_link(out, &label, &url, image);
+                        true
+                    }
+                    None => {
+                        self.pos = save;
+                        false
+                    }
+                }
+            }
+        }
+    }
+
+    /// Parse `dest "title")` starting just past the '(' of an inline
+    /// link. Returns the destination and the index just past the ')'.
+    fn inline_destination(&self, start: usize) -> Option<(String, usize)> {
+        let mut k = start;
         let mut parens = 1i32;
         while k < self.chars.len() {
             match self.chars[k] {
@@ -670,19 +867,21 @@ impl InlineParser {
             }
             k += 1;
         }
-        if parens != 0 {
-            self.pos = save;
-            return false;
+        if parens != 0 || k >= self.chars.len() {
+            return None;
         }
-        let dest_raw: String = self.chars[dest_start..k].iter().collect();
-        let dest = dest_raw.trim();
-        // Optional "title" after whitespace.
-        let (url, _title) = match dest.find(char::is_whitespace) {
-            Some(w) => (dest[..w].trim(), dest[w..].trim().trim_matches('"')),
-            None => (dest, ""),
+        let raw: String = self.chars[start..k].iter().collect();
+        let dest = raw.trim();
+        let url = match dest.find(char::is_whitespace) {
+            Some(w) => dest[..w].trim(),
+            None => dest,
         };
-        self.pos = k + 1;
-        let label_html = inline(&label, self.flavor);
+        Some((url.to_string(), k + 1))
+    }
+
+    /// Emit a link or image in the current flavor.
+    fn emit_link(&mut self, out: &mut String, label: &str, url: &str, image: bool) {
+        let label_html = inline_with_refs(label, self.flavor, self.refs);
         match (self.flavor, image) {
             (Flavor::Html, false) => out.push_str(&format!(
                 "<a href=\"{}\">{}</a>",
@@ -692,17 +891,14 @@ impl InlineParser {
             (Flavor::Html, true) => out.push_str(&format!(
                 "<img src=\"{}\" alt=\"{}\">",
                 escape_html(url),
-                escape_html(&label)
+                escape_html(label)
             )),
             (Flavor::Text, false) => {
                 out.push_str(&label_html);
                 out.push_str(&format!(" ({url})"));
             }
-            (Flavor::Text, true) => {
-                out.push_str(&format!("[image: {label_html}]"));
-            }
+            (Flavor::Text, true) => out.push_str(&format!("[image: {label_html}]")),
         }
-        true
     }
 }
 

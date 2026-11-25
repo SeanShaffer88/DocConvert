@@ -2,22 +2,25 @@
 //! JSON, and plain text behind one clean C ABI, in pure Rust with
 //! zero dependencies. Every parser is hand-written and scope-honest:
 //! the Markdown renderer covers the CommonMark constructs documents
-//! actually use (headings, emphasis, code, links, lists, quotes,
-//! fenced code, GFM tables), the HTML reader handles the element set
-//! the Markdown writer emits plus common hand-written HTML, CSV is
-//! RFC 4180, and JSON is a full parser/serializer.
+//! actually use (headings, emphasis, code, inline and reference
+//! links, lists, quotes, fenced code, GFM tables) and understands
+//! YAML front matter, the HTML reader handles the element set the
+//! Markdown writer emits plus common hand-written HTML and can lift
+//! a table out as CSV, CSV is RFC 4180, and JSON is a full
+//! parser/serializer.
 
 pub mod convert;
 pub mod csv;
 pub mod ffi;
+pub mod frontmatter;
 pub mod html;
 pub mod json;
 pub mod markdown;
 pub mod platform;
 
-pub const VERSION: &str = "0.1.0";
+pub const VERSION: &str = "0.2.0";
 pub const VERSION_MAJOR: u32 = 0;
-pub const VERSION_MINOR: u32 = 1;
+pub const VERSION_MINOR: u32 = 2;
 pub const VERSION_PATCH: u32 = 0;
 
 // Error codes (mirror include/docconvert.h).
