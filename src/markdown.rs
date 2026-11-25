@@ -504,8 +504,10 @@ fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes, style: Style
             out.push_str(&joined_cells(headers));
             out.push_str(" |\n|");
             for index in 0..headers.len() {
+                // Left is what a bare `---` means, so it is written bare:
+                // emitting `:---` for it made the second normalization pass
+                // read a *different* alignment than the first one wrote.
                 out.push_str(match aligns.get(index) {
-                    Some('l') => " :--- |",
                     Some('c') => " :---: |",
                     Some('r') => " ---: |",
                     _ => " --- |",
@@ -1809,7 +1811,7 @@ mod tests {
                      |a|b|\n|:--|--:|\n|1|2|\n\n>   quoted\n\n---\n\n\
                      Text [ref].\n\n[ref]: https://example.com \"T\"\n";
         let canonical = "# Title\n\n- one\n- two\n\n1. three\n2. seven\n\n\
-                         | a | b |\n| :--- | ---: |\n| 1 | 2 |\n\n> quoted\n\n---\n\n\
+                         | a | b |\n| --- | ---: |\n| 1 | 2 |\n\n> quoted\n\n---\n\n\
                          Text [ref].\n\n[ref]: https://example.com \"T\"\n";
         let once = normalize(messy).unwrap();
         assert_eq!(once, canonical);
@@ -1865,6 +1867,28 @@ mod tests {
 
     /// One flag for the pair: presets, and a comma list that reads in
     /// either order.
+    /// Alignment is part of the fixed point: `:---` and `---` mean the same
+    /// thing, so normalize writes the bare form and a second pass agrees.
+    #[test]
+    fn table_alignment_normalizes_to_a_fixed_point() {
+        let once = normalize("+|=\n-\n").expect("normalize");
+        assert_eq!(once, "| + | = |\n| --- | --- |\n");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        for text in [
+            "| a | b |\n| :--- | ---: |\n| 1 | 2 |\n",
+            "| a | b |\n| :---: | :--- |\n| 1 | 2 |\n",
+            "| a | b |\n| --- | --- |\n| 1 | 2 |\n",
+        ] {
+            let once = normalize(text).expect("normalize");
+            assert_eq!(once, normalize(&once).expect("normalize twice"), "{text:?}");
+        }
+        // Explicit centre and right survive; left does not need a colon.
+        assert_eq!(
+            normalize("| a | b |\n| :---: | ---: |\n| 1 | 2 |\n").unwrap(),
+            "| a | b |\n| :---: | ---: |\n| 1 | 2 |\n"
+        );
+    }
+
     /// The second thing `tests/fuzz.rs` found, shrunk to four characters:
     /// converting `_>_` to `*>*` turned the stray underscores around it
     /// into an emphasis pair, so the next pass had something new to convert.

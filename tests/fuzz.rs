@@ -210,8 +210,8 @@ fn sweep(seed: u64, rounds: usize) {
             let once = normalize(&minimal).expect("normalize");
             let twice = normalize(&once).expect("normalize twice");
             panic!(
-                "normalize is not idempotent for {label}\n\
-                 smallest failing input: {minimal:?}\n  once:  {once:?}\n  twice: {twice:?}"
+                "normalize is not idempotent.\nsmallest failing input: {minimal:?}\n\
+                 once:  {once:?}\n  twice: {twice:?}\n{label}"
             );
         }
 
