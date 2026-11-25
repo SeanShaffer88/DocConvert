@@ -16,11 +16,12 @@ pub mod frontmatter;
 pub mod html;
 pub mod json;
 pub mod markdown;
+pub mod mcp;
 pub mod platform;
 
-pub const VERSION: &str = "0.3.0";
+pub const VERSION: &str = "0.4.0";
 pub const VERSION_MAJOR: u32 = 0;
-pub const VERSION_MINOR: u32 = 3;
+pub const VERSION_MINOR: u32 = 4;
 pub const VERSION_PATCH: u32 = 0;
 
 // Error codes (mirror include/docconvert.h).
@@ -34,8 +35,29 @@ pub const ERR_INTERNAL: i32 = 6;
 /// Extension beyond the shared 0–6 set: input that fails to parse.
 pub const ERR_CORRUPT: i32 = 7;
 
+/// Every code the crate can return, with a one-line meaning — the CLI,
+/// the MCP server, and the docs all read this table so they cannot
+/// drift apart.
+pub const ERROR_CODES: &[(i32, &str)] = &[
+    (DC_OK, "ok"),
+    (ERR_INVALID_ARG, "invalid argument"),
+    (ERR_NOT_SUPPORTED, "conversion not supported"),
+    (ERR_NOT_FOUND, "file not found"),
+    (ERR_ACCESS_DENIED, "access denied"),
+    (ERR_PLATFORM, "platform error"),
+    (ERR_INTERNAL, "internal error"),
+    (ERR_CORRUPT, "input failed to parse"),
+];
+
 /// The crate-wide result: failures carry a stable code + message.
 pub type CResult<T> = Result<T, (i32, String)>;
+
+/// Render one failure for a human or a model: `docconvert: <message>`
+/// with the library's own prefix applied exactly once, whichever layer
+/// (ABI, CLI, MCP) ends up printing it.
+pub fn error_message(message: &str) -> &str {
+    message.strip_prefix("docconvert: ").unwrap_or(message)
+}
 
 pub fn corrupt(msg: impl Into<String>) -> (i32, String) {
     (ERR_CORRUPT, format!("docconvert: {}", msg.into()))

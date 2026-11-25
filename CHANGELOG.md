@@ -4,6 +4,37 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.4.0] — 2026-11-25
+
+### Added
+
+- **MCP server** (`docconvert-mcp.exe`): DocConvert as Model Context
+  Protocol tools over stdio (newline-delimited JSON-RPC 2.0), linking
+  the library directly rather than shelling out to the CLI.
+  - tools `convert`, `convert_file`, `front_matter`, `formats`,
+    `matrix`, `capabilities`;
+  - protocol revision 2025-06-18, with 2024-11-05 and 2025-03-26
+    accepted during `initialize`; `ping` supported, notifications left
+    unanswered, unknown methods answered with −32601;
+  - conversion failures become `isError: true` tool results carrying
+    the `DC_*` code, while protocol faults stay JSON-RPC errors;
+  - hand-rolled protocol plus the crate's own JSON parser — the
+    dependency count is still zero.
+- `tests/mcp.rs`: a real session against the spawned binary —
+  handshake, notification handling, `tools/list`, every tool,
+  tool-level and protocol-level errors, then a surviving `ping`.
+- Unit tests inside `src/mcp.rs` for framing, dispatch and arguments.
+
+### Changed
+
+- The `capabilities` table now reports the codes under `error_codes`
+  rather than `exit_codes`, since they are no longer only exit
+  statuses; `convert::error_codes_json()` is the single source.
+- `FrontMatterMode::parse` backs `--front-matter` and the
+  `front_matter` option, so both spellings agree.
+- Release packages now include `docconvert-mcp.exe`.
+- Version 0.4.0 across the crate, header, and release.
+
 ## [0.3.0] — 2026-11-25
 
 ### Added

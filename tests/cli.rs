@@ -84,7 +84,7 @@ fn introspection_is_machine_readable() {
             assert_eq!(
                 entries.len(),
                 7,
-                "name, version, formats, matrix, options, commands, exit_codes"
+                "name, version, formats, matrix, options, commands, error_codes"
             );
         }
         other => panic!("capabilities should be an object, got {other:?}"),

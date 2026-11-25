@@ -2,7 +2,9 @@
 
 Document conversion between **Markdown, HTML, CSV, JSON, and plain
 text** behind one clean C ABI — pure Rust, zero dependencies, every
-parser hand-written. Library #16 in the Windows DLL Collection.
+parser hand-written. Library #16 in the Windows DLL Collection. The
+same matrix also ships as a CLI and as an MCP server for local AI
+clients.
 
 ## Command line (`docconvert.exe`)
 
@@ -39,6 +41,37 @@ guess.
 Exit codes: `0` ok, `1` invalid argument, `2` conversion not supported,
 `3` file not found, `4` access denied, `5` platform error, `6` internal
 error, `7` input failed to parse.
+
+## MCP server (`docconvert-mcp.exe`)
+
+DocConvert as tools for a local AI client, over the Model Context
+Protocol (stdio, newline-delimited JSON-RPC 2.0). It links the library
+directly instead of shelling out to `docconvert.exe`, and it still adds
+no dependencies.
+
+Register it with any MCP-capable client:
+
+```json
+{
+  "mcpServers": {
+    "docconvert": { "command": "C:\\path\\to\\docconvert-mcp.exe" }
+  }
+}
+```
+
+| Tool | Purpose |
+|---|---|
+| `convert` | `{input, from, to, front_matter?}` — the converted document as text. |
+| `convert_file` | `{input_path, output_path, from?, to?, front_matter?}` — writes the file, returns `{written, bytes, from, to}`; formats come from the extensions. |
+| `front_matter` | `{input}` or `{path}` — the YAML front matter as JSON (`{}` when absent). |
+| `formats`, `matrix`, `capabilities` | The same JSON introspection the CLI prints. |
+
+Failures are written for the model to read: a conversion problem comes
+back as a tool result with `isError: true` and text like
+`docconvert: markdown -> csv is not supported (code 2)`, the code being
+the `DC_*` code and therefore the CLI's exit code. Protocol mistakes
+(unknown method, unknown tool, malformed JSON) are plain JSON-RPC
+errors. stdout carries protocol lines only.
 
 ## ABI (`include/docconvert.h`, prefix `dc_`)
 
@@ -131,9 +164,10 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
 - Unit suites per module (front matter, Markdown incl. reference
   links, HTML incl. html→csv, CSV, JSON, matrix, FFI) plus
   integration tests: fixture cross-checks in `tests/interop.rs`, the
-  file API with its error codes in `tests/file_io.rs`, and the CLI
-  driven end to end through pipes, introspection JSON and exit codes
-  in `tests/cli.rs`.
+  file API with its error codes in `tests/file_io.rs`, the CLI driven
+  end to end through pipes, introspection JSON and exit codes in
+  `tests/cli.rs`, and a full MCP session against the spawned server in
+  `tests/mcp.rs`.
 - **External cross-check**: the sample document in
   `tests/fixtures/sample.md` was rendered by **marked** (a mainstream
   Markdown engine) and by DocConvert — the outputs are structurally
@@ -143,7 +177,7 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   target) with `-D warnings`, full suite — green. Pure logic, no
   Win32 calls.
 
-## Scope limits (v0.3)
+## Scope limits (v0.4)
 
 Markdown: no HTML pass-through, no footnotes/task lists; link titles
 are parsed but not emitted (Markdown→HTML keeps `href` only).

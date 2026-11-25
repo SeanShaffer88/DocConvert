@@ -47,6 +47,16 @@ pub fn matrix_json() -> String {
     format!("[{}]", items.join(","))
 }
 
+/// The `error_codes` payload (`{"0":"ok",...}`) shared by the CLI and
+/// the MCP server.
+pub fn error_codes_json() -> String {
+    let items: Vec<String> = crate::ERROR_CODES
+        .iter()
+        .map(|(code, meaning)| format!("\"{code}\":\"{meaning}\""))
+        .collect();
+    format!("{{{}}}", items.join(","))
+}
+
 /// What md→html and md→text do with a YAML front matter block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FrontMatterMode {
@@ -56,6 +66,21 @@ pub enum FrontMatterMode {
     Strip,
     /// Render it as a two-column table so nothing is lost.
     Table,
+}
+
+impl FrontMatterMode {
+    /// Parse the spelling used by the ABI options object and both front
+    /// ends ("strip"/"none" or "table"/"keep").
+    pub fn parse(text: &str) -> CResult<FrontMatterMode> {
+        match text.trim().to_lowercase().as_str() {
+            "strip" | "none" => Ok(FrontMatterMode::Strip),
+            "table" | "keep" => Ok(FrontMatterMode::Table),
+            other => Err((
+                ERR_INVALID_ARG,
+                format!("unknown front_matter mode '{other}' (expected 'strip' or 'table')"),
+            )),
+        }
+    }
 }
 
 /// Conversion options; `Options::default()` is the documented
@@ -90,18 +115,7 @@ impl Options {
                             ))
                         }
                     };
-                    options.front_matter = match mode.trim().to_lowercase().as_str() {
-                        "strip" | "none" => FrontMatterMode::Strip,
-                        "table" | "keep" => FrontMatterMode::Table,
-                        other => {
-                            return Err((
-                                ERR_INVALID_ARG,
-                                format!(
-                                "unknown front_matter mode '{other}' (expected 'strip' or 'table')"
-                            ),
-                            ))
-                        }
-                    };
+                    options.front_matter = FrontMatterMode::parse(&mode)?;
                 }
                 other => {
                     return Err((
