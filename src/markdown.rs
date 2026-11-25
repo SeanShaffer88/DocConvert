@@ -718,7 +718,7 @@ fn collect_definitions(input: &str) -> Collected {
     let mut open_note: Option<String> = None;
     for line in input.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
+        if fence_open(trimmed).is_some() {
             in_fence = !in_fence;
             kept.push(line.to_string());
             continue;
@@ -795,7 +795,7 @@ fn collect_notes(lines: &[String], texts: HashMap<String, String>) -> Notes {
     };
     let mut in_fence = false;
     for line in lines {
-        if line.trim_start().starts_with("```") {
+        if fence_open(line.trim_start()).is_some() {
             in_fence = !in_fence;
             continue;
         }
@@ -943,10 +943,10 @@ fn parse_blocks_at(lines: &[&str], depth: usize) -> Vec<Block> {
             continue;
         }
         // Fenced code.
-        if let Some(info) = fence_start(trimmed) {
+        if let Some((character, run, info)) = fence_open(trimmed) {
             let mut body = String::new();
             i += 1;
-            while i < lines.len() && !lines[i].trim_start().starts_with("```") {
+            while i < lines.len() && !fence_closes(lines[i], character, run) {
                 body.push_str(lines[i]);
                 body.push('\n');
                 i += 1;
@@ -1022,7 +1022,7 @@ fn parse_blocks_at(lines: &[&str], depth: usize) -> Vec<Block> {
                 i += 1;
                 break;
             }
-            if fence_start(t).is_some()
+            if fence_open(t).is_some()
                 || atx_heading(t).is_some()
                 || t.starts_with('>')
                 || list_marker(lines[i]).is_some()
@@ -1043,10 +1043,37 @@ fn parse_blocks_at(lines: &[&str], depth: usize) -> Vec<Block> {
     blocks
 }
 
-fn fence_start(trimmed: &str) -> Option<String> {
-    trimmed
-        .strip_prefix("```")
-        .map(|rest| rest.trim().to_string())
+/// A code fence line: which fence character, how long its run is, and the
+/// info string after it. Both CommonMark fence characters count, the run must
+/// be three or more, and a backtick fence's info string may not contain a
+/// backtick (which is what keeps ```` ```x``` ```` an inline span).
+pub(crate) fn fence_open(line: &str) -> Option<(char, usize, String)> {
+    let trimmed = line.trim();
+    let character = match trimmed.chars().next()? {
+        '`' => '`',
+        '~' => '~',
+        _ => return None,
+    };
+    let run = trimmed.chars().take_while(|c| *c == character).count();
+    if run < 3 {
+        return None;
+    }
+    let info = trimmed[run..].trim().to_string();
+    if character == '`' && info.contains('`') {
+        return None;
+    }
+    Some((character, run, info))
+}
+
+/// Whether `line` closes a fence of `run` copies of `character`: at least
+/// that many of the same character and nothing else on the line. The old
+/// rule — "three backticks is a closer" — both ended blocks early and made a
+/// longer fence read as a shorter one plus an info string, which is how
+/// normalizing `"```\n^```"` grew a backtick on every pass.
+pub(crate) fn fence_closes(line: &str, character: char, run: usize) -> bool {
+    let trimmed = line.trim();
+    let count = trimmed.chars().take_while(|c| *c == character).count();
+    count >= run && trimmed[count..].is_empty()
 }
 
 fn atx_heading(trimmed: &str) -> Option<(usize, String)> {
@@ -1867,6 +1894,28 @@ mod tests {
 
     /// One flag for the pair: presets, and a comma list that reads in
     /// either order.
+    /// `tests/fuzz.rs` shrank the growth case to five characters: a fence
+    /// whose body holds a shorter run. The block used to read the longer
+    /// closing fence as "three backticks plus an info string", so every pass
+    /// added one backtick.
+    #[test]
+    fn fences_are_a_fixed_point() {
+        let once = normalize("```\n^```").expect("normalize");
+        assert_eq!(once, "````\n^```\n````\n");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        // A body line that is nothing but a shorter fence stays in the body.
+        let once = normalize("````\n```\n````\n").expect("normalize");
+        assert!(once.contains("```\n"), "{once:?}");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        // Tilde fences are fences too, and normalize writes backticks.
+        let once = normalize("~~~\nx\n~~~\n").expect("normalize");
+        assert_eq!(once, "```\nx\n```\n");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        // A backtick fence's info string cannot hold a backtick, so this is
+        // an inline span, not a block.
+        assert!(normalize("```x```\n").unwrap().contains("```x```"));
+    }
+
     /// Alignment is part of the fixed point: `:---` and `---` mean the same
     /// thing, so normalize writes the bare form and a second pass agrees.
     #[test]
