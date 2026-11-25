@@ -137,8 +137,11 @@ fn document(rng: &mut Rng) -> String {
         out.push_str(rng.pick(FRAGMENTS));
     }
     if rng.below(2) == 0 {
+        // Past every cap in the crate (256 for HTML, 128 for JSON, 48 for
+        // Markdown blocks) but small enough that a thousand of these still
+        // finish in seconds on a CI runner.
         let unit = rng.pick(&["<div>", "<span>", "> ", "- ", "  ", "[", "[[", "*", "|==="]);
-        for _ in 0..1 + rng.below(4096) {
+        for _ in 0..1 + rng.below(300) {
             out.push_str(unit);
         }
         out.push_str(rng.pick(&["x", "deep", ""]));
@@ -179,12 +182,24 @@ fn idempotent(input: &str) -> bool {
 
 /// Greedily delete characters while `fails` still holds, so a report carries
 /// the smallest input that shows the bug instead of fifty random fragments.
+///
+/// Bounded on purpose: every attempt costs two conversions, so only small
+/// inputs are shrunk and the number of attempts is capped. A report from the
+/// long sweep is worth more than a slow shrink of a generated 20 kB document
+/// (and an unbounded shrinker turns one failure into a hung CI job).
 fn shrink(input: &str, fails: &dyn Fn(&str) -> bool) -> String {
+    const MAX_CHARS: usize = 2_000;
+    const MAX_ATTEMPTS: usize = 3_000;
     let mut chars: Vec<char> = input.chars().collect();
+    if chars.len() > MAX_CHARS {
+        return input.to_string();
+    }
+    let mut attempts = 0usize;
     let mut size = (chars.len() / 2).max(1);
-    while size > 0 {
+    while size > 0 && attempts < MAX_ATTEMPTS {
         let mut index = 0;
-        while index + size <= chars.len() {
+        while index + size <= chars.len() && attempts < MAX_ATTEMPTS {
+            attempts += 1;
             let mut candidate = chars.clone();
             candidate.drain(index..index + size);
             let text: String = candidate.iter().collect();
