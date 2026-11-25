@@ -209,50 +209,56 @@ fn grid_table(lines: &[&str]) -> Option<(String, usize)> {
 
     while i < lines.len() {
         let chars: Vec<char> = lines[i].trim_end().chars().collect();
-        let rule = !chars.is_empty()
-            && chars.iter().all(|c| matches!(c, '+' | '-' | '=' | ' '))
-            && chars.iter().any(|c| matches!(c, '-' | '='));
-        if rule {
-            for column in 0..columns {
-                close_cell(&mut cells, &mut text, &mut open, &row_of, column);
-            }
-            for row in row_of.iter_mut() {
-                *row += 1;
-            }
-            if header.is_none() && chars.contains(&'=') {
-                header = Some(row_of[0]);
-            }
-            i += 1;
-            match lines.get(i) {
-                Some(next) if starts_table_line(next) => continue,
-                _ => break,
-            }
-        }
         let segments = grid_segments(&chars, &bounds);
+        // A wall is a `|` on a column boundary; where the wall is missing the
+        // columns beside it are one cell (a column span).
+        let wall = |column: usize| column == 0 || chars.get(bounds[column]) == Some(&'|');
+        let mut equals = false;
         let mut column = 0usize;
         while column < columns {
-            if is_rule_segment(&segments[column]) {
-                // A separator under this column only: its cell ends, the
-                // cells beside it keep going (that is a row span).
+            let segment = segments[column].as_str();
+            if is_rule_segment(segment.trim()) {
+                // The cell above ends here. Under a row span the rule run is
+                // spaces instead, so this cell keeps collecting text.
+                if segment.contains('=') {
+                    equals = true;
+                }
                 close_cell(&mut cells, &mut text, &mut open, &row_of, column);
                 row_of[column] += 1;
                 column += 1;
                 continue;
             }
-            let start = column;
+            // One cell: the columns up to the next wall.
+            let mut start = column;
+            while start > 0 && !wall(start) {
+                start -= 1;
+            }
+            let mut end = column + 1;
+            while end < columns && !wall(end) && !is_rule_segment(segments[end].trim()) {
+                end += 1;
+            }
             let mut piece = String::new();
-            while column < columns && !is_rule_segment(&segments[column]) {
-                piece.push_str(&segments[column]);
-                column += 1;
+            for segment in &segments[start..end] {
+                piece.push_str(segment);
             }
             append_cell(&mut text, &mut open, start, &collapse(&piece));
-            // The columns to the right belong to this cell.
-            for covered in start + 1..column {
+            for covered in start + 1..end {
                 text[covered].clear();
                 open[covered] = false;
             }
+            column = end;
+        }
+        if equals && header.is_none() {
+            header = Some(row_of.iter().copied().max().unwrap_or(0).max(1));
         }
         i += 1;
+        match lines.get(i) {
+            Some(next) if starts_table_line(next) => continue,
+            _ => break,
+        }
+    }
+    for column in 0..columns {
+        close_cell(&mut cells, &mut text, &mut open, &row_of, column);
     }
 
     let rows = finish_rows(&cells, columns);
