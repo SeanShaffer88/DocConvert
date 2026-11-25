@@ -4,6 +4,28 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.5.0] — 2026-11-25
+
+### Added
+
+- **Link titles**: `[text](url "title")`, `'title'` and `(title)` — on
+  inline links, images, and reference definitions — now reach the HTML
+  as `title="…"`, escaped like any other markup. Titles containing
+  escaped delimiters (`"say \"hi\""`) parse correctly, and
+  `<url with spaces>` destinations are supported.
+- **GFM task lists**: `- [ ] todo` / `- [x] done` render as
+  `<input type="checkbox" disabled[ checked]>` inside `<li>` (ordered
+  lists too), and as `- [ ]` / `- [x]` in the text flavor.
+- Both directions: html→markdown emits `[text](url "title")` and
+  turns a leading checkbox back into `- [x]`, so a Markdown document
+  round-trips through HTML without losing titles or task state.
+- Tests for every delimiter, escaping, angle-bracket destinations, the
+  text flavor, nested/ordered task items, and the full round trip.
+
+### Changed
+
+- Version 0.5.0 across the crate, header, and release.
+
 ## [0.4.0] — 2026-11-25
 
 ### Added

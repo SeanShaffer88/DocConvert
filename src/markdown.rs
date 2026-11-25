@@ -3,8 +3,8 @@
 //! Covers the CommonMark constructs documents actually use: ATX and
 //! setext headings, paragraphs, emphasis/strong/strikethrough, code
 //! spans and fenced blocks, inline and reference links/images,
-//! autolinks, blockquotes, ordered/unordered lists with nesting,
-//! horizontal rules, and GFM pipe tables. Raw HTML inside Markdown is
+//! autolinks, link titles, blockquotes, ordered/unordered lists with
+//! nesting, GFM task lists, horizontal rules, and GFM pipe tables. Raw HTML inside Markdown is
 //! escaped, not passed through (documented: the output is meant to be
 //! safe by default).
 
@@ -116,14 +116,55 @@ fn parse_definition(line: &str) -> Option<(String, String, String)> {
     if url.is_empty() {
         return None;
     }
-    let title = title
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim_matches('(')
-        .trim_matches(')')
-        .to_string();
-    Some((label.to_string(), url, title))
+    Some((label.to_string(), url, parse_title(&title)))
+}
+
+/// Split an inline destination of the form `url`, `<url>`, `url "title"`,
+/// `url 'title'` or `url (title)` into the URL and the raw title.
+fn split_destination(raw: &str) -> (String, String) {
+    let raw = raw.trim();
+    if let Some(rest) = raw.strip_prefix('<') {
+        if let Some(end) = rest.find('>') {
+            return (rest[..end].to_string(), parse_title(&rest[end + 1..]));
+        }
+    }
+    match raw.find(char::is_whitespace) {
+        Some(w) => (raw[..w].to_string(), parse_title(&raw[w..])),
+        None => (raw.to_string(), String::new()),
+    }
+}
+
+/// The title part of a link destination: `"t"`, `'t'` or `(t)`, with
+/// backslash escapes of the delimiters undone. Anything else is empty.
+fn parse_title(raw: &str) -> String {
+    let raw = raw.trim();
+    let delim = match raw.chars().next() {
+        Some(d @ ('"' | '\'' | '(')) => d,
+        _ => return String::new(),
+    };
+    let closer = if delim == '(' { ')' } else { delim };
+    let count = raw.chars().count();
+    if count < 2 || !raw.ends_with(closer) {
+        return String::new();
+    }
+    let inner: String = raw.chars().skip(1).take(count - 2).collect();
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some(next @ ('"' | '\'' | '(' | ')' | '\\')) => out.push(next),
+                Some(next) => {
+                    out.push('\\');
+                    out.push(next);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone)]
@@ -419,6 +460,34 @@ fn parse_list(lines: &[&str], start: usize) -> (Block, usize) {
     (Block::List(ordered, item_blocks), consumed)
 }
 
+/// A GFM task-list marker at the start of an item: `[ ] todo` /
+/// `[x] done` → (checked, remaining text).
+fn task_marker(text: &str) -> Option<(bool, &str)> {
+    let rest = text.trim_start().strip_prefix('[')?;
+    let mut chars = rest.chars();
+    let checked = match chars.next()? {
+        ' ' => false,
+        'x' | 'X' => true,
+        _ => return None,
+    };
+    let after = chars.as_str().strip_prefix(']')?;
+    // GFM wants a space (or nothing) between the box and the text.
+    match after.strip_prefix(' ') {
+        Some(body) => Some((checked, body)),
+        None if after.is_empty() => Some((checked, "")),
+        None => None,
+    }
+}
+
+/// The task marker of a list item, if its first block is a paragraph
+/// that opens with one.
+fn item_task(item: &[Block]) -> Option<(bool, &str)> {
+    match item.first() {
+        Some(Block::Paragraph(text)) => task_marker(text),
+        _ => None,
+    }
+}
+
 fn render_block(b: &Block, flavor: Flavor, refs: &Refs) -> String {
     match (b, flavor) {
         (Block::Heading(level, text), Flavor::Html) => {
@@ -470,8 +539,22 @@ fn render_block(b: &Block, flavor: Flavor, refs: &Refs) -> String {
                     out.push_str(if *ordered { "<ol>" } else { "<ul>" });
                     for item in items {
                         out.push_str("\n<li>");
-                        let parts: Vec<String> =
-                            item.iter().map(|x| render_block(x, flavor, refs)).collect();
+                        let task = item_task(item);
+                        if let Some((checked, _)) = task {
+                            out.push_str(if checked {
+                                "<input type=\"checkbox\" disabled checked> "
+                            } else {
+                                "<input type=\"checkbox\" disabled> "
+                            });
+                        }
+                        let parts: Vec<String> = item
+                            .iter()
+                            .enumerate()
+                            .map(|(i, block)| match (i, task) {
+                                (0, Some((_, rest))) => inline_with_refs(rest, flavor, refs),
+                                _ => render_block(block, flavor, refs),
+                            })
+                            .collect();
                         // Tight rendering: strip the single <p> wrap.
                         let joined = parts.join("\n");
                         let joined = joined
@@ -487,13 +570,23 @@ fn render_block(b: &Block, flavor: Flavor, refs: &Refs) -> String {
                 }
                 Flavor::Text => {
                     for (n, item) in items.iter().enumerate() {
-                        let marker = if *ordered {
+                        let mut marker = if *ordered {
                             format!("{}. ", n + 1)
                         } else {
-                            "- ".into()
+                            "- ".to_string()
                         };
-                        let parts: Vec<String> =
-                            item.iter().map(|x| render_block(x, flavor, refs)).collect();
+                        let task = item_task(item);
+                        if let Some((checked, _)) = task {
+                            marker.push_str(if checked { "[x] " } else { "[ ] " });
+                        }
+                        let parts: Vec<String> = item
+                            .iter()
+                            .enumerate()
+                            .map(|(i, block)| match (i, task) {
+                                (0, Some((_, rest))) => inline_with_refs(rest, flavor, refs),
+                                _ => render_block(block, flavor, refs),
+                            })
+                            .collect();
                         out.push_str(&marker);
                         out.push_str(&parts.join("\n  "));
                         out.push('\n');
@@ -795,9 +888,9 @@ impl<'a> InlineParser<'a> {
         let label: String = self.chars[label_start..j].iter().collect();
         match self.chars.get(j + 1) {
             Some('(') => match self.inline_destination(j + 2) {
-                Some((url, after)) => {
+                Some((url, title, after)) => {
                     self.pos = after;
-                    self.emit_link(out, &label, &url, image);
+                    self.emit_link(out, &label, &url, &title, image);
                     true
                 }
                 None => {
@@ -821,9 +914,9 @@ impl<'a> InlineParser<'a> {
                     normalize_label(&explicit)
                 };
                 match self.refs.get(&key).cloned() {
-                    Some((url, _title)) => {
+                    Some((url, title)) => {
                         self.pos = k + 1;
-                        self.emit_link(out, &label, &url, image);
+                        self.emit_link(out, &label, &url, &title, image);
                         true
                     }
                     None => {
@@ -835,9 +928,9 @@ impl<'a> InlineParser<'a> {
             _ => {
                 // Shortcut reference: [label] with a matching definition.
                 match self.refs.get(&normalize_label(&label)).cloned() {
-                    Some((url, _title)) => {
+                    Some((url, title)) => {
                         self.pos = j + 1;
-                        self.emit_link(out, &label, &url, image);
+                        self.emit_link(out, &label, &url, &title, image);
                         true
                     }
                     None => {
@@ -850,8 +943,9 @@ impl<'a> InlineParser<'a> {
     }
 
     /// Parse `dest "title")` starting just past the '(' of an inline
-    /// link. Returns the destination and the index just past the ')'.
-    fn inline_destination(&self, start: usize) -> Option<(String, usize)> {
+    /// link. Returns the destination, the title (empty when absent) and
+    /// the index just past the ')'.
+    fn inline_destination(&self, start: usize) -> Option<(String, String, usize)> {
         let mut k = start;
         let mut parens = 1i32;
         while k < self.chars.len() {
@@ -871,27 +965,32 @@ impl<'a> InlineParser<'a> {
             return None;
         }
         let raw: String = self.chars[start..k].iter().collect();
-        let dest = raw.trim();
-        let url = match dest.find(char::is_whitespace) {
-            Some(w) => dest[..w].trim(),
-            None => dest,
-        };
-        Some((url.to_string(), k + 1))
+        let (url, title) = split_destination(&raw);
+        Some((url, title, k + 1))
     }
 
-    /// Emit a link or image in the current flavor.
-    fn emit_link(&mut self, out: &mut String, label: &str, url: &str, image: bool) {
+    /// Emit a link or image in the current flavor. Titles reach the
+    /// HTML output as `title="…"`; the text flavor keeps the label and
+    /// URL only.
+    fn emit_link(&mut self, out: &mut String, label: &str, url: &str, title: &str, image: bool) {
         let label_html = inline_with_refs(label, self.flavor, self.refs);
+        let title_attr = if title.is_empty() {
+            String::new()
+        } else {
+            format!(" title=\"{}\"", escape_html(title))
+        };
         match (self.flavor, image) {
             (Flavor::Html, false) => out.push_str(&format!(
-                "<a href=\"{}\">{}</a>",
+                "<a href=\"{}\"{}>{}</a>",
                 escape_html(url),
+                title_attr,
                 label_html
             )),
             (Flavor::Html, true) => out.push_str(&format!(
-                "<img src=\"{}\" alt=\"{}\">",
+                "<img src=\"{}\" alt=\"{}\"{}>",
                 escape_html(url),
-                escape_html(label)
+                escape_html(label),
+                title_attr
             )),
             (Flavor::Text, false) => {
                 out.push_str(&label_html);
@@ -964,19 +1063,19 @@ mod tests {
                   An [undefined] ref stays literal.\n";
         let out = html(md);
         assert!(
-            out.contains("<a href=\"https://example.com/docs\">the docs</a>"),
+            out.contains("<a href=\"https://example.com/docs\" title=\"Docs\">the docs</a>"),
             "{out}"
         );
         assert!(
-            out.contains("<a href=\"https://example.com/docs\">docs</a>"),
+            out.contains("<a href=\"https://example.com/docs\" title=\"Docs\">docs</a>"),
             "{out}"
         );
         assert!(
-            out.contains("<a href=\"https://example.com/s\">short</a>"),
+            out.contains("<a href=\"https://example.com/s\" title=\"Short\">short</a>"),
             "{out}"
         );
         assert!(
-            out.contains("<img src=\"https://example.com/docs\" alt=\"logo\">"),
+            out.contains("<img src=\"https://example.com/docs\" alt=\"logo\" title=\"Docs\">"),
             "{out}"
         );
         assert!(out.contains("[undefined] ref stays literal"), "{out}");
@@ -1013,5 +1112,83 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "Hi\n\nSome bold text and x (https://e.com).\n");
+    }
+    #[test]
+    fn link_titles() {
+        // Inline titles in every delimiter, plus images and escaping.
+        let out = html(
+            "[a](https://e.com \"Double\") [b](https://e.com 'Single') [c](https://e.com (Paren))\n",
+        );
+        assert!(
+            out.contains("<a href=\"https://e.com\" title=\"Double\">a</a>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<a href=\"https://e.com\" title=\"Single\">b</a>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<a href=\"https://e.com\" title=\"Paren\">c</a>"),
+            "{out}"
+        );
+        let out = html("![logo](logo.png \"The logo\")\n");
+        assert!(
+            out.contains("<img src=\"logo.png\" alt=\"logo\" title=\"The logo\">"),
+            "{out}"
+        );
+        // A title is markup, so it is escaped like the rest.
+        let out = html("[x](https://e.com \"a &amp; <b>\")\n");
+        assert!(out.contains("title=\"a &amp;amp; &lt;b&gt;\""), "{out}");
+        // Escaped delimiters inside the title survive.
+        let out = html("[x](https://e.com \"say \\\"hi\\\"\")\n");
+        assert!(out.contains("title=\"say &quot;hi&quot;\""), "{out}");
+        // Angle-bracket destinations may carry spaces.
+        let out = html("[x](<https://e.com/a b> \"Spaced\")\n");
+        assert!(
+            out.contains("<a href=\"https://e.com/a b\" title=\"Spaced\">x</a>"),
+            "{out}"
+        );
+        // The text flavor keeps label and URL, not the title.
+        let text = convert_markdown("[x](https://e.com \"T\")\n", Flavor::Text).unwrap();
+        assert_eq!(text, "x (https://e.com)\n");
+    }
+
+    #[test]
+    fn task_lists() {
+        let md = "- [ ] call the plumber\n- [x] buy milk\n- [X] pay rent\n- plain item\n";
+        let out = html(md);
+        assert!(
+            out.contains("<li><input type=\"checkbox\" disabled> call the plumber</li>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<li><input type=\"checkbox\" disabled checked> buy milk</li>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<li><input type=\"checkbox\" disabled checked> pay rent</li>"),
+            "{out}"
+        );
+        assert!(out.contains("<li>plain item</li>"), "{out}");
+
+        let text = convert_markdown(md, Flavor::Text).unwrap();
+        assert_eq!(
+            text,
+            "- [ ] call the plumber\n- [x] buy milk\n- [x] pay rent\n- plain item\n"
+        );
+
+        // Nested and ordered task items still nest.
+        let out = html("1. [x] first\n2. [ ] second\n");
+        assert!(out.contains("<ol>"), "{out}");
+        assert!(
+            out.contains("<li><input type=\"checkbox\" disabled checked> first</li>"),
+            "{out}"
+        );
+        // A bracket that is not a task marker stays text.
+        let out = html("- [not a task] just brackets\n");
+        assert!(
+            out.contains("just brackets") && out.contains("[not a task]"),
+            "{out}"
+        );
     }
 }

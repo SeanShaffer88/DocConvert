@@ -261,6 +261,17 @@ pub fn decode_entities(s: &str) -> String {
     out
 }
 
+/// A `title` attribute as the title part of a Markdown destination, so
+/// the document round-trips: ` "Title"`, with delimiters escaped.
+fn md_title(title: Option<&str>) -> String {
+    match title {
+        Some(title) if !title.trim().is_empty() => {
+            format!(" \"{}\"", title.replace('\\', "\\\\").replace('"', "\\\""))
+        }
+        _ => String::new(),
+    }
+}
+
 fn attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
     attrs
         .iter()
@@ -378,9 +389,29 @@ fn render_list_md(items: &[Node], ordered: bool, out: &mut String, depth: usize)
                 };
                 out.push_str(&"  ".repeat(depth));
                 out.push_str(&marker);
+                // GFM task item: a leading checkbox input becomes the
+                // "[x] " / "[ ] " marker, and the rest renders normally.
+                let mut content: &[Node] = children;
+                let task_box = match content.first() {
+                    Some(Node::Elem { name, attrs, .. }) => {
+                        let checkbox = name == "input"
+                            && attr(attrs, "type")
+                                .is_some_and(|kind| kind.eq_ignore_ascii_case("checkbox"));
+                        if checkbox {
+                            Some(attrs.iter().any(|(key, _)| key == "checked"))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(checked) = task_box {
+                    out.push_str(if checked { "[x] " } else { "[ ] " });
+                    content = &content[1..];
+                }
                 // li children: inline content + possible nested list.
                 let mut first = true;
-                for child in children {
+                for child in content {
                     match child {
                         Node::Elem { name: cn, .. } if cn == "ul" || cn == "ol" => {
                             out.push('\n');
@@ -497,13 +528,19 @@ fn inline_md(nodes: &[Node]) -> String {
                     if href.is_empty() {
                         out.push_str(&text);
                     } else {
-                        out.push_str(&format!("[{text}]({href})"));
+                        out.push_str(&format!(
+                            "[{text}]({href}{})",
+                            md_title(attr(attrs, "title"))
+                        ));
                     }
                 }
                 "img" => {
                     let src = attr(attrs, "src").unwrap_or("");
                     let alt = attr(attrs, "alt").unwrap_or("");
-                    out.push_str(&format!("![{alt}]({src})"));
+                    out.push_str(&format!(
+                        "![{alt}]({src}{})",
+                        md_title(attr(attrs, "title"))
+                    ));
                 }
                 "br" => out.push('\n'),
                 _ => out.push_str(&inline_md(children)),
@@ -738,6 +775,25 @@ fn inline_text(nodes: &[Node]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GFM task items and link titles survive the HTML → Markdown
+    /// direction, so a Markdown document round-trips through HTML.
+    #[test]
+    fn task_lists_and_link_titles() {
+        let md = html_to_markdown(
+            "<ul><li><input type=\"checkbox\" disabled> todo</li>\
+             <li><input type=\"checkbox\" disabled checked> done</li>\
+             <li>plain</li></ul>\
+             <p><a href=\"https://e.com\" title=\"Docs\">docs</a> \
+             <img src=\"l.png\" alt=\"logo\" title=\"Logo\"></p>",
+        )
+        .unwrap();
+        assert!(md.contains("- [ ] todo"), "{md}");
+        assert!(md.contains("- [x] done"), "{md}");
+        assert!(md.contains("- plain"), "{md}");
+        assert!(md.contains("[docs](https://e.com \"Docs\")"), "{md}");
+        assert!(md.contains("![logo](l.png \"Logo\")"), "{md}");
+    }
 
     #[test]
     fn html_to_md_basics() {

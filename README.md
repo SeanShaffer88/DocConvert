@@ -136,9 +136,11 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   spans + fenced blocks (with `language-*` classes), inline links and
   images, **reference-style links** (`[text][ref]`, `[text][]`,
   `[text]`, `![alt][ref]`) with `[ref]: url "title"` definitions
-  collected document-wide, autolinks, blockquotes, nested lists,
-  horizontal rules, GFM pipe tables with alignment. **Raw HTML in
-  Markdown is escaped**, so output is safe to embed by default.
+  collected document-wide, **link titles** (`"…"`, `'…'`, `(…)`) on
+  both inline and reference links and images, **GFM task lists**
+  (`- [x] done`), autolinks, blockquotes, nested lists, horizontal
+  rules, GFM pipe tables with alignment. **Raw HTML in Markdown is
+  escaped**, so output is safe to embed by default.
 - **Front matter**: a leading `---` block is parsed as a YAML subset
   (flat keys, nested maps, `- item` lists, inline `[a, b]` lists,
   `|`/`>` block scalars). Numbers and booleans become JSON scalars,
@@ -177,10 +179,11 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   target) with `-D warnings`, full suite — green. Pure logic, no
   Win32 calls.
 
-## Scope limits (v0.4)
+## Scope limits (v0.5)
 
-Markdown: no HTML pass-through, no footnotes/task lists; link titles
-are parsed but not emitted (Markdown→HTML keeps `href` only).
+Markdown: no HTML pass-through, no footnotes; link titles reach the
+HTML output (and come back through html→markdown) but are dropped from
+the plain-text flavor, which keeps the label and URL only.
 HTML: expects roughly well-formed input (no tag-soup repair
 heuristics); html→csv uses the first table only and ignores spans.
 CSV→JSON always uses the first row as headers. See ROADMAP.md.

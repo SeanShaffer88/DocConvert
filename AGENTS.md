@@ -43,6 +43,12 @@
   output, silence on success, stderr-only errors, and exit codes equal
   to the `DC_*` codes. `tests/cli.rs` drives the real binary via
   `CARGO_BIN_EXE_docconvert`, including every documented exit code.
+- Markdown link titles are parsed once, by `split_destination` /
+  `parse_title` in `src/markdown.rs`, and rendered as an escaped
+  `title="…"`; `md_title` in `src/html.rs` writes them back. Task
+  lists are recognized by `task_marker` (a `[ ]`/`[x]` prefix on an
+  item's first paragraph) so the marker never leaks into the rendered
+  text — keep that check in the list renderer's first-block path.
 - Byte offsets in the Markdown block parser must go through
   `line_indent` / `tail_from` — slicing a line at a raw byte column
   can panic mid-UTF-8.
