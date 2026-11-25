@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn tool_errors_are_reported_not_thrown() {
         let request = "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":\
-                       {\"name\":\"convert\",\"arguments\":{\"input\":\"x\",\"from\":\"markdown\",\
+                       {\"name\":\"convert\",\"arguments\":{\"input\":\"x\",\"from\":\"text\",\
                        \"to\":\"csv\"}}}";
         let response = parsed(handle_line(request));
         assert_eq!(field(result(&response), "isError"), Some(&Json::Bool(true)));

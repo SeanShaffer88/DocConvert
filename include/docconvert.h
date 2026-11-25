@@ -1,4 +1,4 @@
-/* DocConvert.dll v0.5.0 — document conversion behind one clean C ABI:
+/* DocConvert.dll v0.6.0 — document conversion behind one clean C ABI:
  * Markdown, HTML, CSV, JSON, and plain text. All strings UTF-8,
  * NUL-terminated. char* results are caller-owned: free with
  * dc_free_string(). Format names: "markdown"/"md", "html",

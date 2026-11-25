@@ -93,7 +93,7 @@ fn finish_code(run: Result<Result<(), (i32, String)>, (i32, String)>) -> c_int {
 
 #[no_mangle]
 pub extern "C" fn dc_version() -> *const c_char {
-    static VERSION_C: &[u8] = b"0.5.0\0";
+    static VERSION_C: &[u8] = b"0.6.0\0";
     VERSION_C.as_ptr() as *const c_char
 }
 
@@ -297,11 +297,7 @@ mod tests {
         dc_free_string(p);
         assert_eq!(s, "<h1>Hi</h1>\n<p>Some <strong>bold</strong> text.</p>");
 
-        let bad = dc_convert(
-            cs("x").as_ptr(),
-            cs("markdown").as_ptr(),
-            cs("csv").as_ptr(),
-        );
+        let bad = dc_convert(cs("x").as_ptr(), cs("text").as_ptr(), cs("csv").as_ptr());
         assert!(bad.is_null());
         assert_eq!(dc_last_error_code(), crate::ERR_NOT_SUPPORTED);
 

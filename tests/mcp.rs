@@ -275,7 +275,7 @@ fn failures_are_readable_tool_errors() {
     // Unsupported pair: isError plus the code.
     let result = session.call(
         "convert",
-        "{\"input\":\"x\",\"from\":\"markdown\",\"to\":\"csv\"}",
+        "{\"input\":\"x\",\"from\":\"text\",\"to\":\"csv\"}",
     );
     assert!(is_error(&result));
     assert!(

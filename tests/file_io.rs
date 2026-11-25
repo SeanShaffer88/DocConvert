@@ -105,7 +105,7 @@ fn options_and_errors() {
     assert!(message.contains("nope.md"), "{message}");
 
     // An unsupported pair fails loudly and writes nothing.
-    let out = dir.join("post.csv");
+    let out = dir.join("post.json");
     let code = dc_convert_file(
         path(&md).as_ptr(),
         path(&out).as_ptr(),

@@ -186,7 +186,7 @@ fn converts_files_and_stays_quiet() {
 #[test]
 fn exit_codes_mirror_the_dc_error_codes() {
     // 2: a pair the matrix does not contain.
-    let unsupported = run(&["convert", "-f", "markdown", "-t", "csv"], Some("x"));
+    let unsupported = run(&["convert", "-f", "text", "-t", "csv"], Some("x"));
     assert_eq!(unsupported.status.code(), Some(2));
     assert!(
         err(&unsupported).contains("not supported"),

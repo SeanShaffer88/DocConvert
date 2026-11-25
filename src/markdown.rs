@@ -10,7 +10,23 @@
 
 use std::collections::HashMap;
 
-use crate::{escape_html, CResult};
+use crate::{corrupt, escape_html, CResult};
+
+/// Footnote definitions collected from the document, plus the numbering
+/// assigned while rendering. GFM numbers footnotes by the order of their
+/// first reference, not by where they are defined.
+#[derive(Debug, Default, Clone)]
+struct Notes {
+    order: Vec<String>,
+    numbers: HashMap<String, usize>,
+    texts: HashMap<String, String>,
+}
+
+impl Notes {
+    fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+}
 
 /// Link reference definitions, keyed by normalized label:
 /// `[docs]: https://example.com "Title"` → `"docs"` → `(url, title)`.
@@ -23,22 +39,97 @@ pub enum Flavor {
 }
 
 pub fn convert_markdown(input: &str, flavor: Flavor) -> CResult<String> {
-    let (refs, lines) = collect_definitions(input);
+    let (refs, note_texts, lines) = collect_definitions(input);
+    let notes = collect_notes(&lines, note_texts);
     let lines: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let blocks = parse_blocks(&lines);
     let rendered: Vec<String> = blocks
         .iter()
-        .map(|b| render_block(b, flavor, &refs))
+        .map(|b| render_block(b, flavor, &refs, &notes))
         .collect();
     let sep = match flavor {
         Flavor::Html => "\n",
         Flavor::Text => "\n\n",
     };
     let mut out = rendered.join(sep);
+    if !notes.is_empty() {
+        out.push_str(&render_notes(&notes, flavor, &refs));
+    }
     if flavor == Flavor::Text && !out.is_empty() {
         out.push('\n');
     }
     Ok(out)
+}
+
+/// The footnote block appended to the document, in reference order.
+fn render_notes(notes: &Notes, flavor: Flavor, refs: &Refs) -> String {
+    let empty = Notes::default();
+    match flavor {
+        Flavor::Html => {
+            let mut out = String::from("\n<section class=\"footnotes\">\n<ol>");
+            for (index, label) in notes.order.iter().enumerate() {
+                let number = index + 1;
+                let text = notes.texts.get(label).map(String::as_str).unwrap_or("");
+                out.push_str(&format!(
+                    "\n<li id=\"fn-{number}\"><p>{} <a href=\"#fnref-{number}\">↩</a></p></li>",
+                    inline_ctx(text, Flavor::Html, refs, &empty)
+                ));
+            }
+            out.push_str("\n</ol>\n</section>");
+            out
+        }
+        Flavor::Text => {
+            let mut out = String::from("\n\nFootnotes\n\n");
+            for (index, label) in notes.order.iter().enumerate() {
+                let text = notes.texts.get(label).map(String::as_str).unwrap_or("");
+                out.push_str(&format!(
+                    "[{}] {}\n",
+                    index + 1,
+                    inline_ctx(text, Flavor::Text, refs, &empty)
+                ));
+            }
+            out.trim_end().to_string()
+        }
+    }
+}
+
+/// Markdown→CSV when the whole document is one GFM table — optionally
+/// under a single heading, the shape a README payload usually takes.
+/// Prose (or no table at all) is an error rather than a guess: there
+/// would be no rows to speak of.
+pub fn markdown_to_csv(input: &str) -> CResult<String> {
+    let (refs, _note_texts, lines) = collect_definitions(input);
+    let raw: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+    let blocks = parse_blocks(&raw);
+    let mut table: Option<&Block> = None;
+    let mut heading = false;
+    for block in &blocks {
+        match block {
+            Block::Heading(..) if table.is_none() && !heading => heading = true,
+            Block::Table(..) if table.is_none() => table = Some(block),
+            _ => {
+                return Err(corrupt(
+                    "markdown→csv needs one table (and at most one heading before it)",
+                ))
+            }
+        }
+    }
+    let (headers, rows) = match table {
+        Some(Block::Table(headers, _, rows)) => (headers, rows),
+        _ => return Err(corrupt("markdown→csv: no table found")),
+    };
+    // Cells are Markdown, so render them to plain text first.
+    let empty = Notes::default();
+    let cell = |text: &str| inline_ctx(text, Flavor::Text, &refs, &empty);
+    let width = headers.len();
+    let mut out: Vec<Vec<String>> = Vec::with_capacity(rows.len() + 1);
+    out.push(headers.iter().map(|header| cell(header)).collect());
+    for row in rows {
+        let mut cells: Vec<String> = row.iter().map(|c| cell(c)).collect();
+        cells.resize(width, String::new());
+        out.push(cells);
+    }
+    Ok(crate::csv::write_csv(&out))
 }
 
 /// Normalize a reference label the CommonMark way: trim, collapse
@@ -60,13 +151,16 @@ pub fn normalize_label(label: &str) -> String {
     out.to_lowercase()
 }
 
-/// Pull `[label]: url "title"` lines out of the document (fenced code
-/// is left alone) and hand back the remaining lines. Definitions are
-/// document-wide in CommonMark, so this runs before block parsing.
-fn collect_definitions(input: &str) -> (Refs, Vec<String>) {
+/// Pull `[label]: url "title"` and `[^label]: note` lines out of the
+/// document (fenced code is left alone) and hand back the remaining
+/// lines. Definitions are document-wide, so this runs before block
+/// parsing.
+fn collect_definitions(input: &str) -> (Refs, HashMap<String, String>, Vec<String>) {
     let mut refs = Refs::new();
+    let mut notes: HashMap<String, String> = HashMap::new();
     let mut kept: Vec<String> = Vec::new();
     let mut in_fence = false;
+    let mut open_note: Option<String> = None;
     for line in input.lines() {
         let trimmed = line.trim_start();
         if trimmed.starts_with("```") {
@@ -75,6 +169,23 @@ fn collect_definitions(input: &str) -> (Refs, Vec<String>) {
             continue;
         }
         if !in_fence {
+            // A note's continuation: indented lines after the definition.
+            if let Some(label) = open_note.clone() {
+                let indent = line_indent(line);
+                if !line.trim().is_empty() && indent >= 4 {
+                    if let Some(text) = notes.get_mut(&label) {
+                        text.push(' ');
+                        text.push_str(line.trim());
+                    }
+                    continue;
+                }
+                open_note = None;
+            }
+            if let Some((label, text)) = parse_footnote_definition(line) {
+                notes.entry(label.clone()).or_insert(text);
+                open_note = Some(label);
+                continue;
+            }
             if let Some((label, url, title)) = parse_definition(line) {
                 refs.entry(normalize_label(&label)).or_insert((url, title));
                 continue;
@@ -82,7 +193,58 @@ fn collect_definitions(input: &str) -> (Refs, Vec<String>) {
         }
         kept.push(line.to_string());
     }
-    (refs, kept)
+    (refs, notes, kept)
+}
+
+/// `[^label]: note text` with up to three spaces of indentation.
+fn parse_footnote_definition(line: &str) -> Option<(String, String)> {
+    if line_indent(line) > 3 {
+        return None;
+    }
+    let rest = line.trim().strip_prefix("[^")?;
+    let close = rest.find("]:")?;
+    let label = rest[..close].trim();
+    if label.is_empty() || label.contains(']') || label.contains('[') {
+        return None;
+    }
+    Some((label.to_string(), rest[close + 2..].trim().to_string()))
+}
+
+/// The footnotes this document refers to, numbered in order of first
+/// reference. Fenced code is skipped, and references to undefined notes
+/// are left as literal text.
+fn collect_notes(lines: &[String], texts: HashMap<String, String>) -> Notes {
+    let mut notes = Notes {
+        order: Vec::new(),
+        numbers: HashMap::new(),
+        texts,
+    };
+    let mut in_fence = false;
+    for line in lines {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let mut rest = line.as_str();
+        while let Some(open) = rest.find("[^") {
+            let after = &rest[open + 2..];
+            let Some(close) = after.find(']') else {
+                break;
+            };
+            let label = &after[..close];
+            let known = notes.texts.contains_key(label) && !notes.numbers.contains_key(label);
+            if known {
+                notes.order.push(label.to_string());
+                let number = notes.order.len();
+                notes.numbers.insert(label.to_string(), number);
+            }
+            rest = &after[close..];
+        }
+    }
+    notes
 }
 
 /// `[label]: https://example.com "Title"` with up to three spaces of
@@ -488,19 +650,19 @@ fn item_task(item: &[Block]) -> Option<(bool, &str)> {
     }
 }
 
-fn render_block(b: &Block, flavor: Flavor, refs: &Refs) -> String {
+fn render_block(b: &Block, flavor: Flavor, refs: &Refs, notes: &Notes) -> String {
     match (b, flavor) {
         (Block::Heading(level, text), Flavor::Html) => {
             format!(
                 "<h{level}>{}</h{level}>",
-                inline_with_refs(text, flavor, refs)
+                inline_ctx(text, flavor, refs, notes)
             )
         }
-        (Block::Heading(_, text), Flavor::Text) => inline_with_refs(text, flavor, refs),
+        (Block::Heading(_, text), Flavor::Text) => inline_ctx(text, flavor, refs, notes),
         (Block::Paragraph(text), Flavor::Html) => {
-            format!("<p>{}</p>", inline_with_refs(text, flavor, refs))
+            format!("<p>{}</p>", inline_ctx(text, flavor, refs, notes))
         }
-        (Block::Paragraph(text), Flavor::Text) => inline_with_refs(text, flavor, refs),
+        (Block::Paragraph(text), Flavor::Text) => inline_ctx(text, flavor, refs, notes),
         (Block::Code(info, body), Flavor::Html) => {
             let class = if info.is_empty() {
                 String::new()
@@ -516,14 +678,14 @@ fn render_block(b: &Block, flavor: Flavor, refs: &Refs) -> String {
         (Block::Quote(inner), Flavor::Html) => {
             let inside: Vec<String> = inner
                 .iter()
-                .map(|x| render_block(x, flavor, refs))
+                .map(|x| render_block(x, flavor, refs, notes))
                 .collect();
             format!("<blockquote>\n{}\n</blockquote>", inside.join("\n"))
         }
         (Block::Quote(inner), Flavor::Text) => {
             let inside: Vec<String> = inner
                 .iter()
-                .map(|x| render_block(x, flavor, refs))
+                .map(|x| render_block(x, flavor, refs, notes))
                 .collect();
             inside
                 .join("\n\n")
@@ -551,8 +713,8 @@ fn render_block(b: &Block, flavor: Flavor, refs: &Refs) -> String {
                             .iter()
                             .enumerate()
                             .map(|(i, block)| match (i, task) {
-                                (0, Some((_, rest))) => inline_with_refs(rest, flavor, refs),
-                                _ => render_block(block, flavor, refs),
+                                (0, Some((_, rest))) => inline_ctx(rest, flavor, refs, notes),
+                                _ => render_block(block, flavor, refs, notes),
                             })
                             .collect();
                         // Tight rendering: strip the single <p> wrap.
@@ -583,8 +745,8 @@ fn render_block(b: &Block, flavor: Flavor, refs: &Refs) -> String {
                             .iter()
                             .enumerate()
                             .map(|(i, block)| match (i, task) {
-                                (0, Some((_, rest))) => inline_with_refs(rest, flavor, refs),
-                                _ => render_block(block, flavor, refs),
+                                (0, Some((_, rest))) => inline_ctx(rest, flavor, refs, notes),
+                                _ => render_block(block, flavor, refs, notes),
                             })
                             .collect();
                         out.push_str(&marker);
@@ -603,7 +765,7 @@ fn render_block(b: &Block, flavor: Flavor, refs: &Refs) -> String {
                 out.push_str(&format!(
                     "<th{}>{}</th>",
                     align_attr(aligns.get(j)),
-                    inline_with_refs(h, flavor, refs)
+                    inline_ctx(h, flavor, refs, notes)
                 ));
             }
             out.push_str("</tr>\n</thead>\n<tbody>");
@@ -613,7 +775,7 @@ fn render_block(b: &Block, flavor: Flavor, refs: &Refs) -> String {
                     out.push_str(&format!(
                         "<td{}>{}</td>",
                         align_attr(aligns.get(j)),
-                        inline_with_refs(cell, flavor, refs)
+                        inline_ctx(cell, flavor, refs, notes)
                     ));
                 }
                 out.push_str("</tr>");
@@ -649,11 +811,17 @@ pub fn inline(text: &str, flavor: Flavor) -> String {
 /// `inline`, with the document's link reference definitions available
 /// (needed for `[label][ref]`, `[label][]`, and `[label]` links).
 pub fn inline_with_refs(text: &str, flavor: Flavor, refs: &Refs) -> String {
+    inline_ctx(text, flavor, refs, &Notes::default())
+}
+
+/// The inline renderer with every document-level input it needs.
+fn inline_ctx(text: &str, flavor: Flavor, refs: &Refs, notes: &Notes) -> String {
     InlineParser {
         chars: text.chars().collect(),
         pos: 0,
         flavor,
         refs,
+        notes,
     }
     .run()
 }
@@ -663,6 +831,7 @@ struct InlineParser<'a> {
     pos: usize,
     flavor: Flavor,
     refs: &'a Refs,
+    notes: &'a Notes,
 }
 
 impl<'a> InlineParser<'a> {
@@ -886,6 +1055,20 @@ impl<'a> InlineParser<'a> {
             return false;
         }
         let label: String = self.chars[label_start..j].iter().collect();
+        // A footnote reference is `[^label]` and nothing else: `[^x](…)`
+        // stays an ordinary link with a caret in its label.
+        if !image {
+            if let Some(name) = label.strip_prefix('^') {
+                let bare = !matches!(self.chars.get(j + 1), Some('(') | Some('['));
+                if let Some(number) = self.notes.numbers.get(name) {
+                    if bare {
+                        self.pos = j + 1;
+                        self.emit_note(out, *number);
+                        return true;
+                    }
+                }
+            }
+        }
         match self.chars.get(j + 1) {
             Some('(') => match self.inline_destination(j + 2) {
                 Some((url, title, after)) => {
@@ -969,11 +1152,22 @@ impl<'a> InlineParser<'a> {
         Some((url, title, k + 1))
     }
 
+    /// Emit a footnote reference: a superscript link in HTML, a bracketed
+    /// number in the text flavor (matching the appended footnote block).
+    fn emit_note(&mut self, out: &mut String, number: usize) {
+        match self.flavor {
+            Flavor::Html => out.push_str(&format!(
+                "<sup><a href=\"#fn-{number}\" id=\"fnref-{number}\">{number}</a></sup>"
+            )),
+            Flavor::Text => out.push_str(&format!("[{number}]")),
+        }
+    }
+
     /// Emit a link or image in the current flavor. Titles reach the
     /// HTML output as `title="…"`; the text flavor keeps the label and
     /// URL only.
     fn emit_link(&mut self, out: &mut String, label: &str, url: &str, title: &str, image: bool) {
-        let label_html = inline_with_refs(label, self.flavor, self.refs);
+        let label_html = inline_ctx(label, self.flavor, self.refs, self.notes);
         let title_attr = if title.is_empty() {
             String::new()
         } else {
@@ -1190,5 +1384,60 @@ mod tests {
             out.contains("just brackets") && out.contains("[not a task]"),
             "{out}"
         );
+    }
+    #[test]
+    fn footnotes() {
+        let md = "Text with a note[^a] and another[^long].\n\n\
+                  [^a]: First note.\n\
+                  [^long]: A longer note\n    with a continuation line.\n";
+        let out = html(md);
+        assert!(
+            out.contains("<sup><a href=\"#fn-1\" id=\"fnref-1\">1</a></sup>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<sup><a href=\"#fn-2\" id=\"fnref-2\">2</a></sup>"),
+            "{out}"
+        );
+        assert!(out.contains("<section class=\"footnotes\">"), "{out}");
+        assert!(out.contains("<li id=\"fn-1\"><p>First note."), "{out}");
+        // Continuation lines join the note.
+        assert!(out.contains("with a continuation line."), "{out}");
+        assert!(out.contains("href=\"#fnref-2\""), "{out}");
+
+        // Numbering follows the first reference, not the definition order.
+        let out = html("B[^two] then A[^one]\n\n[^one]: One\n[^two]: Two\n");
+        let first = out.find("#fn-1").expect("first note");
+        assert!(out[first..].contains("Two"), "{out}");
+
+        // Undefined notes and code fences stay literal.
+        let out = html("Nothing here[^missing].\n\n```\nref[^a]\n```\n");
+        assert!(out.contains("[^missing]"), "{out}");
+        assert!(out.contains("[^a]"), "{out}");
+        assert!(!out.contains("<section class=\"footnotes\">"), "{out}");
+
+        // The text flavor numbers them and lists them at the end.
+        let text = convert_markdown(md, Flavor::Text).unwrap();
+        assert!(
+            text.contains("Text with a note[1] and another[2]."),
+            "{text}"
+        );
+        assert!(text.contains("Footnotes"), "{text}");
+        assert!(text.contains("[1] First note."), "{text}");
+    }
+
+    #[test]
+    fn markdown_table_to_csv() {
+        let csv = markdown_to_csv("| Name | Qty |\n|---|---|\n| Milk | 2 |\n").unwrap();
+        assert_eq!(csv, "Name,Qty\r\nMilk,2\r\n");
+        // A heading above the table is fine.
+        let csv = markdown_to_csv("# Inventory\n\n| A |\n|---|\n| **1** |\n").unwrap();
+        assert_eq!(csv, "A\r\n1\r\n", "inline markup is flattened");
+        // Prose, or no table at all, is an error rather than a guess.
+        assert!(markdown_to_csv("Just prose.\n").is_err());
+        assert!(markdown_to_csv("# Only a heading\n").is_err());
+        assert!(markdown_to_csv("| A |\n|---|\n| 1 |\n\nMore prose.\n").is_err());
+        // Two tables are ambiguous.
+        assert!(markdown_to_csv("| A |\n|---|\n| 1 |\n\n| B |\n|---|\n| 2 |\n").is_err());
     }
 }
