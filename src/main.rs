@@ -39,8 +39,9 @@ CONVERT FLAGS
       --heading-ids       id="slug" anchors on md->html headings
       --options <json>    options object, e.g. {"front_matter":"table"}
       --stream        copy identity conversions in chunks (files only)
-  Flags also take --flag=value. Aliases: md, mkd, htm, xhtml, tsv, tab,
-  txt, plain, rst, rest, adoc, asciidoc, opml.
+  Flags also take --flag=value. A flag wins over the same key in
+  --options, whatever order the two appear in. Aliases: md, mkd, htm,
+  xhtml, tsv, tab, txt, plain, rst, rest, adoc, asciidoc, opml.
 
 NORMALIZE FLAGS
       --emphasis <s>      asterisk (default) or underscore
@@ -452,9 +453,6 @@ fn read_file(path: &str) -> CResult<String> {
     String::from_utf8(bytes).map_err(|_| (ERR_CORRUPT, format!("'{path}' is not valid UTF-8 text")))
 }
 
-/// Write the document to stdout exactly as produced. A closed pipe
-/// (`docconvert … | head`) is a normal way for the reader to stop, not
-/// an error worth a non-zero exit.
 /// Print a notice meant for a human who double-clicked the exe, then
 /// wait for Enter so the console window stays up long enough to read it.
 fn pause(notice: &str) -> CResult<()> {
@@ -464,6 +462,9 @@ fn pause(notice: &str) -> CResult<()> {
     Ok(())
 }
 
+/// Write the document to stdout exactly as produced. A closed pipe
+/// (`docconvert … | head`) is a normal way for the reader to stop, not
+/// an error worth a non-zero exit.
 fn print_stdout(text: &str) -> CResult<()> {
     let mut stdout = std::io::stdout();
     match stdout

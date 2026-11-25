@@ -21,6 +21,12 @@ const VOID: &[&str] = &[
     "br", "hr", "img", "meta", "link", "input", "col", "wbr", "source",
 ];
 
+/// How deeply elements may nest. Hand-written pages stay far below this;
+/// the cap is what keeps a hostile file from taking the host process down,
+/// because the renderers — and the tree's own `Drop` — walk one stack frame
+/// per level. Deeper input is `DC_ERR_CORRUPT`, never a crash.
+pub(crate) const MAX_DEPTH: usize = 256;
+
 pub(crate) fn parse_html(input: &str) -> CResult<Vec<Node>> {
     type OpenElem = (String, Vec<(String, String)>, Vec<Node>);
     let bytes: Vec<char> = input.chars().collect();
@@ -94,6 +100,14 @@ pub(crate) fn parse_html(input: &str) -> CResult<Vec<Node>> {
                         {
                             k += 1;
                         }
+                        // A `/` that does not introduce `/>` (as in `<a/b>`,
+                        // or `<a]: https://e.com` where the attribute scan
+                        // lands on the second slash) cannot start a name: skip
+                        // it, or this loop spins on the same byte forever.
+                        if k == a_start {
+                            k += 1;
+                            continue;
+                        }
                         let a_name: String =
                             bytes[a_start..k].iter().collect::<String>().to_lowercase();
                         while k < bytes.len() && bytes[k].is_whitespace() {
@@ -166,6 +180,11 @@ pub(crate) fn parse_html(input: &str) -> CResult<Vec<Node>> {
                     pos = bytes.len();
                 }
                 continue;
+            }
+            if stack.len() >= MAX_DEPTH && !self_closing && !VOID.contains(&name.as_str()) {
+                return Err(corrupt(format!(
+                    "html: elements nest deeper than {MAX_DEPTH} levels (offset {pos})"
+                )));
             }
             if VOID.contains(&name.as_str()) || self_closing {
                 push_node(
@@ -933,6 +952,49 @@ mod tests {
         let md = html_to_markdown("<p>x<sup>2</sup></p>").unwrap();
         assert!(md.contains("x2"), "{md}");
         assert!(!md.contains("[^"), "{md}");
+    }
+
+    /// A stray `/` inside a tag used to leave the attribute loop on the same
+    /// byte forever — an infinite loop in the DLL, which is worse than a
+    /// crash because the host never gets control back.
+    #[test]
+    fn stray_slashes_in_a_tag_are_skipped() {
+        for input in [
+            "<div /x>text",
+            "<a/b>text",
+            "<a]: https://e.com<tr>x",
+            "<div / / / >x",
+            "<div attr=/x>y",
+        ] {
+            assert!(html_to_markdown(input).is_ok(), "{input:?} must not hang");
+        }
+        // The self-closing form still works, and still closes the element.
+        let md = html_to_markdown("<br/>a<br />b").expect("self-closing br");
+        assert!(md.contains('a') && md.contains('b'), "{md:?}");
+    }
+
+    #[test]
+    fn deep_nesting_is_refused_rather_than_crashing() {
+        let shallow = format!(
+            "{}text{}",
+            "<div>".repeat(MAX_DEPTH - 1),
+            "</div>".repeat(MAX_DEPTH - 1)
+        );
+        assert!(html_to_markdown(&shallow).is_ok());
+        // Unclosed as well as closed: the stack grows either way.
+        for input in [
+            format!("{}text", "<div>".repeat(MAX_DEPTH + 1)),
+            format!(
+                "{}text{}",
+                "<div>".repeat(MAX_DEPTH + 1),
+                "</div>".repeat(MAX_DEPTH + 1)
+            ),
+            format!("{}x", "<span>".repeat(50_000)),
+        ] {
+            let error = html_to_markdown(&input).expect_err("too deep");
+            assert_eq!(error.0, crate::ERR_CORRUPT, "{error:?}");
+            assert!(error.1.contains("nest"), "{error:?}");
+        }
     }
 
     #[test]

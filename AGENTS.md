@@ -76,11 +76,14 @@
   anywhere else; the TOC must keep pointing at the ids the conversion
   writes.
 - `toc` is a view over headings, not a matrix pair: sources without
-  headings are NOT_SUPPORTED. `convert::MATRIX` is 37 pairs;
+  headings are NOT_SUPPORTED. `convert::MATRIX` is 38 pairs;
   markdown→markdown remains a byte-faithful identity.
 - `markdown::normalize` re-renders blocks canonically and must stay
   idempotent: definitions go last, inline prose is left as written, and
   `render_markdown_block` is the single place block shapes are printed.
+  It settles — `SETTLE_PASSES` re-runs the pass until one changes
+  nothing — because rendering can hand the next parse a different
+  structure. Both sweeps in `tests/fuzz.rs` are the check on that.
 - Byte offsets in the Markdown block parser must go through
   `line_indent` / `tail_from` — slicing a line at a raw byte column
   can panic mid-UTF-8.
@@ -159,6 +162,26 @@
   `Style::parse_spec`: comma- or space-separated tokens, later ones win,
   `github` resets to the defaults. It is sugar over `--emphasis`/`--fence`,
   not a third setting — never let the two disagree.
-- Gate: WinDevKit tools/gate.sh (fmt + clippy -D warnings BOTH
-  targets + FULL tests). This crate's match-heavy code attracts
-  collapsible-match lints; prefer guards from the start.
+- Gate: `tools/gate.sh` in this repo (fmt + clippy `-D warnings` +
+  full tests + release build) — the same four steps
+  `.github/workflows/ci.yml` runs. This crate's match-heavy code
+  attracts collapsible-match lints; prefer guards from the start.
+  `ci.yml`/`release.yml` exist only under `.github/workflows/`: never
+  keep a second copy at the root, which is how they drifted before.
+- Numbers in JSON are validated by `json::is_json_number`, never by
+  `f64::from_str`: `1.`, `.5`, `+1` and `01` all parse as floats and
+  none of them is a JSON number, so inferring one and writing it out
+  produces JSON nobody can read — including us. Every writer that turns
+  text into a number (`scalar_of`, front-matter scalars) uses that one
+  predicate, and the parser uses it too.
+- Anything that recurses over *input* structure needs a depth cap, not
+  a bigger stack: `html::MAX_DEPTH` (refuses past 256 nested elements,
+  `ERR_CORRUPT`), `json::MAX_DEPTH` (128), `markdown::MAX_BLOCK_DEPTH`
+  (48, where the excess stays literal text instead of erroring). The
+  DLL's memory is the host's, and a stack overflow there is not an
+  error the host can catch.
+- `tests/fuzz.rs` is the regression net for the parsers: a seeded
+  generator, a small sweep in CI and a long ignored one, a watchdog that
+  turns a hang into a failure, and a shrinker that reports the smallest
+  input it can. When it finds something, the seed, round and input are in
+  the message — turn that into a named test and keep the sweep as it is.

@@ -1,11 +1,7 @@
-# Canonical CI for Sean's Rust Windows projects — copy to
-# .github/workflows/ci.yml. NOTE: the GitHub App cannot create/edit files
-# under .github/workflows/ (no Workflows permission), so this file is
-# always added through the GitHub web UI.
-#
-# Steps mirror tools/gate.sh exactly, plus the one thing a local gate on
-# Linux cannot do: really LINK and RUN on Windows (LNK2019-class errors
-# and Windows-only test failures only appear here).
+# CI: the canonical copy, and the only one. Steps mirror tools/gate.sh
+# exactly, plus the one thing a local gate on Linux cannot do: really
+# LINK and RUN on Windows (LNK2019-class errors and Windows-only test
+# failures only appear here).
 name: ci
 on:
   push:
@@ -15,6 +11,9 @@ on:
 jobs:
   gate:
     runs-on: windows-latest
+    # A parser that loops forever should fail the gate, not hold it open all
+    # night: the suite takes a few minutes, so twenty is generous.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

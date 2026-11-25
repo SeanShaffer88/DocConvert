@@ -270,16 +270,11 @@ fn scalar(raw: &str) -> Json {
     }
 }
 
-/// Numbers keep their source text (no precision loss), and
-/// leading-zero values stay strings — `version: 007` is a code.
+/// Numbers keep their source text (no precision loss), but only text that
+/// is really a JSON number counts: `1.`, `.5` and `+1` stay strings, and so
+/// do leading-zero values — `version: 007` is a code.
 fn number_text(text: &str) -> Option<String> {
-    if text.len() > 1 && text.starts_with('0') && !text.starts_with("0.") {
-        return None;
-    }
-    let numeric = text
-        .chars()
-        .all(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'));
-    if numeric && text.parse::<f64>().is_ok() {
+    if crate::json::is_json_number(text) {
         Some(text.to_string())
     } else {
         None
@@ -353,6 +348,25 @@ mod tests {
             fm.get("summary"),
             Some(&Json::Str("two lines joined".into()))
         );
+    }
+
+    /// Same rule as the CSV/TSV/JSON scalars: `1.` and `.5` are text, so
+    /// the JSON we emit for front matter always parses.
+    #[test]
+    fn only_real_numbers_become_numbers() {
+        let src = "---\na: 1.\nb: .5\nc: +1\nd: 0.5\ne: -3e2\nf: 007\n---\nbody\n";
+        let (fm, _) = fields(src);
+        let fm = fm.expect("front matter");
+        for (key, text) in [("a", "1."), ("b", ".5"), ("c", "+1"), ("f", "007")] {
+            assert_eq!(
+                fm.get(key),
+                Some(&Json::Str(text.into())),
+                "{key} stays a string"
+            );
+        }
+        assert_eq!(fm.get("d"), Some(&Json::Num("0.5".into())));
+        assert_eq!(fm.get("e"), Some(&Json::Num("-3e2".into())));
+        assert!(crate::json::parse_json(&fm.to_json().to_compact()).is_ok());
     }
 
     #[test]

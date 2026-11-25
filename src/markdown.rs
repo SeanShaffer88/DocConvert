@@ -396,9 +396,32 @@ pub fn normalize(input: &str) -> CResult<String> {
     normalize_with(input, Style::default())
 }
 
+/// How many passes `normalize` will make before it accepts the document as
+/// settled. Every pass either changes nothing or moves the document toward
+/// the fixed point; eight is more than any case has needed.
+const SETTLE_PASSES: usize = 8;
+
 /// `normalize`, with the opt-in style layer: which character emphasis
 /// and code fences use. Structure is canonical either way.
+///
+/// One pass is not always a fixed point, because rendering can hand the next
+/// parse a different structure: a paragraph that loses its leading spaces
+/// becomes a list item, an item's text that loses a leading space turns its
+/// tail into a marker. So the document is normalized until a pass changes
+/// nothing.
 pub fn normalize_with(input: &str, style: Style) -> CResult<String> {
+    let mut out = normalize_once(input, style)?;
+    for _ in 0..SETTLE_PASSES {
+        let again = normalize_once(&out, style)?;
+        if again == out {
+            break;
+        }
+        out = again;
+    }
+    Ok(out)
+}
+
+fn normalize_once(input: &str, style: Style) -> CResult<String> {
     let collected = collect_definitions(input);
     let notes = collect_notes(&collected.body, collected.note_texts);
     let raw: Vec<&str> = collected.body.iter().map(|s| s.as_str()).collect();
@@ -422,24 +445,57 @@ pub fn normalize_with(input: &str, style: Style) -> CResult<String> {
 }
 
 fn render_markdown_blocks(blocks: &[Block], refs: &Refs, notes: &Notes, style: Style) -> String {
-    let parts: Vec<String> = blocks
-        .iter()
-        .map(|block| {
-            render_markdown_block(block, refs, notes, style)
-                .trim_end()
-                .to_string()
-        })
-        .filter(|text| !text.is_empty())
-        .collect();
+    let mut parts: Vec<String> = Vec::with_capacity(blocks.len());
+    let mut index = 0usize;
+    while index < blocks.len() {
+        // Two lists of the same kind in a row *are* one list: read back, a
+        // blank line between two `-` items does not start a new one. Writing
+        // them as two made normalize unstable (`" - \n\n* "` came back as
+        // `"- \n-\n"`), so they are merged here.
+        if let Block::List(ordered, items) = &blocks[index] {
+            let mut merged = items.clone();
+            let mut next = index + 1;
+            while let Some(Block::List(other_ordered, other_items)) = blocks.get(next) {
+                if other_ordered != ordered {
+                    break;
+                }
+                merged.extend(other_items.iter().cloned());
+                next += 1;
+            }
+            if next > index + 1 {
+                let text =
+                    render_markdown_block(&Block::List(*ordered, merged), refs, notes, style);
+                let text = text.trim_end();
+                if !text.is_empty() {
+                    parts.push(text.to_string());
+                }
+                index = next;
+                continue;
+            }
+        }
+        let text = render_markdown_block(&blocks[index], refs, notes, style);
+        let text = text.trim_end();
+        if !text.is_empty() {
+            parts.push(text.to_string());
+        }
+        index += 1;
+    }
     parts.join("\n\n")
 }
 
 fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes, style: Style) -> String {
     match block {
-        Block::Heading(level, text) => normalize_inline(
-            &format!("{} {}", "#".repeat(*level), text.trim()),
-            style.emphasis.marker(),
-        ),
+        Block::Heading(level, text) => {
+            // A setext heading may be written over several lines; ATX is one
+            // line, so the breaks become spaces. Leaving them in put a second
+            // block inside the heading, and the next pass split it in two
+            // (`")\n~\n---"` → `"## )\n~"` → `"## )\n\n~"`).
+            let text = text.trim().replace(['\n', '\r', '\t'], " ");
+            normalize_inline(
+                &format!("{} {}", "#".repeat(*level), text),
+                style.emphasis.marker(),
+            )
+        }
         Block::Paragraph(text) => normalize_inline(
             &text
                 .lines()
@@ -457,8 +513,25 @@ fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes, style: Style
         ),
         Block::Code(info, body) => {
             let text = body.trim_end_matches('\n');
-            let fence = fence_for(text, style.fence);
-            format!("{fence}{}\n{text}\n{fence}", info.trim())
+            // A backtick fence cannot carry a backtick in its info string: a
+            // tilde fence with a backtick info string would be written as four
+            // backticks and read back as a longer fence. Those blocks keep
+            // tildes, whatever the style says.
+            let wanted = if info.contains('`') {
+                Fence::Tilde
+            } else {
+                style.fence
+            };
+            let fence = fence_for(text, wanted);
+            // An empty block is two lines, not three: the stray blank line
+            // between the fences was read back as a body line, and inside a
+            // list item the indented closing fence then became a block of its
+            // own — so the document grew every time it was normalized.
+            if text.is_empty() {
+                format!("{fence}{}\n{fence}", info.trim())
+            } else {
+                format!("{fence}{}\n{text}\n{fence}", info.trim())
+            }
         }
         Block::Quote(inner) => {
             let inner = render_markdown_blocks(inner, refs, notes, style);
@@ -504,8 +577,10 @@ fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes, style: Style
             out.push_str(&joined_cells(headers));
             out.push_str(" |\n|");
             for index in 0..headers.len() {
+                // Left is what a bare `---` means, so it is written bare:
+                // emitting `:---` for it made the second normalization pass
+                // read a *different* alignment than the first one wrote.
                 out.push_str(match aligns.get(index) {
-                    Some('l') => " :--- |",
                     Some('c') => " :---: |",
                     Some('r') => " ---: |",
                     _ => " --- |",
@@ -574,16 +649,39 @@ fn normalize_inline(text: &str, marker: char) -> String {
             if let Some(close) = find_run(&chars, i + run, run) {
                 let inner: String = chars[i + run..close].iter().collect();
                 let trimmed = inner.trim();
-                if !trimmed.is_empty() {
-                    let pad = trimmed.starts_with('`') || trimmed.ends_with('`');
+                // Only a span that needs no padding is rewritten. When the
+                // text itself starts or ends with a backtick, CommonMark's
+                // padding (`\`\` \` \`\` `) would be read back as a
+                // different run structure on the next pass — normalize would
+                // then not be idempotent, and repeating it would keep
+                // changing the document. Such a span stays byte for byte.
+                // A span that crosses a line break keeps its shape too: the
+                // rewrite would join lines that block parsing treats
+                // separately, and the second pass would read the result as one
+                // paragraph (`"`\n]``>``"` lost its line break that way). Nor
+                // is a span rewritten when a backtick run touches it: the new
+                // single tick would merge with that run and pair differently
+                // next time.
+                let before = i.checked_sub(1).map(|index| chars[index]);
+                let after = chars.get(close + run).copied();
+                let neighbour_tick = before == Some('`') || after == Some('`');
+                // Dropping padding keeps every backtick where it was, so it
+                // cannot change how runs pair elsewhere. Shortening the run
+                // can: the ticks it frees up may pair with a stray one later
+                // in the line (`"`a``:``- `"` did exactly that, and the second
+                // pass then read a span across the last two ticks). So a run
+                // is only shortened when it is the line's only backtick.
+                let elsewhere_tick =
+                    chars[..i].contains(&'`') || chars[close + run..].contains(&'`');
+                let run_ok = run == 1 || !elsewhere_tick;
+                if !trimmed.is_empty()
+                    && !trimmed.contains('`')
+                    && !inner.contains('\n')
+                    && !neighbour_tick
+                    && run_ok
+                {
                     out.push('`');
-                    if pad {
-                        out.push(' ');
-                    }
                     out.push_str(trimmed);
-                    if pad {
-                        out.push(' ');
-                    }
                     out.push('`');
                     i = close + run;
                     continue;
@@ -602,8 +700,25 @@ fn normalize_inline(text: &str, marker: char) -> String {
             if opens && starts_word && run <= 2 {
                 if let Some(close) = find_run(&chars, i + run, run) {
                     let ends_word = close > i + run && !chars[close - 1].is_whitespace();
-                    if ends_word {
-                        let inner: String = chars[i + run..close].iter().collect();
+                    let inner: String = chars[i + run..close].iter().collect();
+                    // Only a rewrite that reads back the same way counts. If
+                    // the marker would touch another emphasis character (or
+                    // the span's own text holds one), the new run could pair
+                    // with it on the next pass — `__<_>_` became `_*<*>_`
+                    // and then `**<*>*`. Those spans stay as written.
+                    let before = i.checked_sub(1).map(|index| chars[index]);
+                    let after = chars.get(close + run).copied();
+                    // Emphasis whose text holds code, or that sits beside a
+                    // backtick, is left alone: the emitted marker would change
+                    // how backtick runs pair on the next pass (`_```_1`` ` came
+                    // back as `*``*1```).
+                    let safe = [before, after].iter().all(|neighbour| {
+                        *neighbour != Some(other)
+                            && *neighbour != Some(marker)
+                            && *neighbour != Some('`')
+                    }) && !inner.contains(marker)
+                        && !inner.contains('`');
+                    if ends_word && safe {
                         out.push_str(&marker.to_string().repeat(run));
                         out.push_str(&inner);
                         out.push_str(&marker.to_string().repeat(run));
@@ -706,7 +821,7 @@ fn collect_definitions(input: &str) -> Collected {
     let mut open_note: Option<String> = None;
     for line in input.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
+        if fence_open(trimmed).is_some() {
             in_fence = !in_fence;
             kept.push(line.to_string());
             continue;
@@ -783,7 +898,7 @@ fn collect_notes(lines: &[String], texts: HashMap<String, String>) -> Notes {
     };
     let mut in_fence = false;
     for line in lines {
-        if line.trim_start().starts_with("```") {
+        if fence_open(line.trim_start()).is_some() {
             in_fence = !in_fence;
             continue;
         }
@@ -902,7 +1017,25 @@ enum Block {
     Table(Vec<String>, Vec<char>, Vec<Vec<String>>), // headers, aligns ('l','c','r'), rows
 }
 
+/// How deeply blocks may nest — a quote in a quote in a list item. The
+/// parser and the renderers both walk one frame per level, so this is what
+/// keeps a hostile document from overflowing the stack; past the cap the
+/// remaining lines stay literal text rather than being dropped.
+const MAX_BLOCK_DEPTH: usize = 48;
+
 fn parse_blocks(lines: &[&str]) -> Vec<Block> {
+    parse_blocks_at(lines, 0)
+}
+
+fn parse_blocks_at(lines: &[&str], depth: usize) -> Vec<Block> {
+    if depth >= MAX_BLOCK_DEPTH {
+        let text = lines.join("\n");
+        return if text.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![Block::Paragraph(text)]
+        };
+    }
     let mut blocks = Vec::new();
     let mut i = 0usize;
     while i < lines.len() {
@@ -913,10 +1046,10 @@ fn parse_blocks(lines: &[&str]) -> Vec<Block> {
             continue;
         }
         // Fenced code.
-        if let Some(info) = fence_start(trimmed) {
+        if let Some((character, run, info)) = fence_open(trimmed) {
             let mut body = String::new();
             i += 1;
-            while i < lines.len() && !lines[i].trim_start().starts_with("```") {
+            while i < lines.len() && !fence_closes(lines[i], character, run) {
                 body.push_str(lines[i]);
                 body.push('\n');
                 i += 1;
@@ -940,12 +1073,12 @@ fn parse_blocks(lines: &[&str]) -> Vec<Block> {
                 i += 1;
             }
             let refs: Vec<&str> = inner_lines.iter().map(|s| s.as_str()).collect();
-            blocks.push(Block::Quote(parse_blocks(&refs)));
+            blocks.push(Block::Quote(parse_blocks_at(&refs, depth + 1)));
             continue;
         }
         // List.
         if list_marker(line).is_some() {
-            let (list, consumed) = parse_list(lines, i);
+            let (list, consumed) = parse_list(lines, i, depth);
             blocks.push(list);
             i += consumed;
             continue;
@@ -992,7 +1125,7 @@ fn parse_blocks(lines: &[&str]) -> Vec<Block> {
                 i += 1;
                 break;
             }
-            if fence_start(t).is_some()
+            if fence_open(t).is_some()
                 || atx_heading(t).is_some()
                 || t.starts_with('>')
                 || list_marker(lines[i]).is_some()
@@ -1013,10 +1146,37 @@ fn parse_blocks(lines: &[&str]) -> Vec<Block> {
     blocks
 }
 
-fn fence_start(trimmed: &str) -> Option<String> {
-    trimmed
-        .strip_prefix("```")
-        .map(|rest| rest.trim().to_string())
+/// A code fence line: which fence character, how long its run is, and the
+/// info string after it. Both CommonMark fence characters count, the run must
+/// be three or more, and a backtick fence's info string may not contain a
+/// backtick (which is what keeps ```` ```x``` ```` an inline span).
+pub(crate) fn fence_open(line: &str) -> Option<(char, usize, String)> {
+    let trimmed = line.trim();
+    let character = match trimmed.chars().next()? {
+        '`' => '`',
+        '~' => '~',
+        _ => return None,
+    };
+    let run = trimmed.chars().take_while(|c| *c == character).count();
+    if run < 3 {
+        return None;
+    }
+    let info = trimmed[run..].trim().to_string();
+    if character == '`' && info.contains('`') {
+        return None;
+    }
+    Some((character, run, info))
+}
+
+/// Whether `line` closes a fence of `run` copies of `character`: at least
+/// that many of the same character and nothing else on the line. The old
+/// rule — "three backticks is a closer" — both ended blocks early and made a
+/// longer fence read as a shorter one plus an info string, which is how
+/// normalizing `"```\n^```"` grew a backtick on every pass.
+pub(crate) fn fence_closes(line: &str, character: char, run: usize) -> bool {
+    let trimmed = line.trim();
+    let count = trimmed.chars().take_while(|c| *c == character).count();
+    count >= run && trimmed[count..].is_empty()
 }
 
 fn atx_heading(trimmed: &str) -> Option<(usize, String)> {
@@ -1078,24 +1238,34 @@ fn list_marker(line: &str) -> Option<(bool, usize, usize)> {
     match chars.next()? {
         '-' | '*' | '+' => {
             let after = &rest[1..];
-            if after.starts_with(' ') || after.is_empty() {
-                Some((false, indent, 2))
-            } else {
-                None
-            }
+            marker_space(after).map(|width| (false, indent, 1 + width))
         }
         c if c.is_ascii_digit() => {
             let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
             let after = &rest[digits.len()..];
-            if (after.starts_with('.') || after.starts_with(')'))
-                && (after.len() == 1 || after[1..].starts_with(' '))
-            {
-                Some((true, indent, digits.len() + 2))
-            } else {
-                None
+            if !(after.starts_with('.') || after.starts_with(')')) {
+                return None;
             }
+            marker_space(&after[1..]).map(|width| (true, indent, digits.len() + 1 + width))
         }
         _ => None,
+    }
+}
+
+/// How much room a list marker takes after itself, by CommonMark: one space,
+/// or as many spaces as are written up to four. Five or more mean the item
+/// starts with indented code, one space past the marker. Reading the width as
+/// always one left the extra spaces in the item's text, and a second
+/// normalization pass took them away again (`"\u{a0}  -  ["` did that).
+fn marker_space(after: &str) -> Option<usize> {
+    if after.is_empty() || after.starts_with('\t') {
+        return Some(1);
+    }
+    let spaces = after.chars().take_while(|c| *c == ' ').count();
+    match spaces {
+        0 => None,
+        1..=4 => Some(spaces),
+        _ => Some(1),
     }
 }
 
@@ -1126,7 +1296,7 @@ fn tail_from(line: &str, column: usize) -> String {
     line[cut..].to_string()
 }
 
-fn parse_list(lines: &[&str], start: usize) -> (Block, usize) {
+fn parse_list(lines: &[&str], start: usize, depth: usize) -> (Block, usize) {
     let (ordered, base_indent, _) = list_marker(lines[start]).unwrap();
     let mut items: Vec<Vec<String>> = Vec::new();
     let mut i = start;
@@ -1146,10 +1316,16 @@ fn parse_list(lines: &[&str], start: usize) -> (Block, usize) {
                     if l.trim().is_empty() {
                         // Look ahead: blank ends the list unless the
                         // next line belongs to an item.
+                        // A blank line does not end the item when the next
+                        // line is indented to the content column, or is a
+                        // marker that continues the list. Only checking for
+                        // markers dropped the item's second paragraph
+                        // (`"* >t\n\u{3000}\\"` lost its shape that way).
                         if i + 1 < lines.len()
-                            && list_marker(lines[i + 1]).is_some_and(|(o, ind, _)| {
-                                (o == ordered && ind == base_indent) || ind > base_indent
-                            })
+                            && (line_indent(lines[i + 1]) >= content_col
+                                || list_marker(lines[i + 1]).is_some_and(|(o, ind, _)| {
+                                    (o == ordered && ind == base_indent) || ind > base_indent
+                                }))
                         {
                             items.last_mut().unwrap().push(String::new());
                             i += 1;
@@ -1178,7 +1354,7 @@ fn parse_list(lines: &[&str], start: usize) -> (Block, usize) {
         .iter()
         .map(|lines| {
             let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
-            parse_blocks(&refs)
+            parse_blocks_at(&refs, depth + 1)
         })
         .collect();
     (Block::List(ordered, item_blocks), consumed)
@@ -1781,7 +1957,7 @@ mod tests {
                      |a|b|\n|:--|--:|\n|1|2|\n\n>   quoted\n\n---\n\n\
                      Text [ref].\n\n[ref]: https://example.com \"T\"\n";
         let canonical = "# Title\n\n- one\n- two\n\n1. three\n2. seven\n\n\
-                         | a | b |\n| :--- | ---: |\n| 1 | 2 |\n\n> quoted\n\n---\n\n\
+                         | a | b |\n| --- | ---: |\n| 1 | 2 |\n\n> quoted\n\n---\n\n\
                          Text [ref].\n\n[ref]: https://example.com \"T\"\n";
         let once = normalize(messy).unwrap();
         assert_eq!(once, canonical);
@@ -1837,6 +2013,180 @@ mod tests {
 
     /// One flag for the pair: presets, and a comma list that reads in
     /// either order.
+    /// `tests/fuzz.rs` shrank the growth case to five characters: a fence
+    /// whose body holds a shorter run. The block used to read the longer
+    /// closing fence as "three backticks plus an info string", so every pass
+    /// added one backtick.
+    #[test]
+    fn fences_are_a_fixed_point() {
+        let once = normalize("```\n^```").expect("normalize");
+        assert_eq!(once, "````\n^```\n````\n");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        // A body line that is nothing but a shorter fence stays in the body.
+        let once = normalize("````\n```\n````\n").expect("normalize");
+        assert!(once.contains("```\n"), "{once:?}");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        // Tilde fences are fences too, and normalize writes backticks.
+        let once = normalize("~~~\nx\n~~~\n").expect("normalize");
+        assert_eq!(once, "```\nx\n```\n");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        // A backtick fence's info string cannot hold a backtick, so this is
+        // an inline span, not a block — and an inline span loses its surplus
+        // backticks.
+        assert_eq!(normalize("```x```\n").unwrap(), "`x`\n");
+        // An empty block stays two lines, which keeps it stable in a list.
+        assert_eq!(normalize("- ~~~\n").unwrap(), "- ```\n  ```\n");
+        let once = normalize("- ~~~\n").unwrap();
+        assert_eq!(once, normalize(&once).unwrap());
+        // An info string with a backtick cannot live on a backtick fence.
+        assert_eq!(normalize("~~~`\n").unwrap(), "~~~`\n~~~\n");
+        let once = normalize("~~~`\n").unwrap();
+        assert_eq!(once, normalize(&once).unwrap());
+        // An inline span whose text holds a backtick is left byte for byte.
+        let once = normalize("```\\``😀``").unwrap();
+        assert_eq!(once, normalize(&once).unwrap(), "{once:?}");
+        // So is a span that crosses a line break.
+        let once = normalize("`\n]``>``").unwrap();
+        assert_eq!(once, normalize(&once).unwrap(), "{once:?}");
+        // And an emphasis rewrite never lands beside a backtick, or around
+        // code.
+        for text in [
+            "_``_``\n",
+            "_```_1``",
+            "``x````y``",
+            "`a``:``- `",
+            "``x`` y",
+        ] {
+            let once = normalize(text).unwrap();
+            assert_eq!(once, normalize(&once).unwrap(), "{text:?} → {once:?}");
+        }
+    }
+
+    /// The spaces after a list marker are structure, not text.
+    #[test]
+    fn list_marker_width_follows_commonmark() {
+        assert_eq!(normalize("-  x\n").unwrap(), "- x\n");
+        let once = normalize("-  x\n").expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        assert_eq!(normalize("1)   x\n").unwrap(), "1. x\n");
+        let once = normalize("\u{a0}  -  [").expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"), "{once:?}");
+    }
+
+    /// A blank line inside an item does not end it when the next line is
+    /// indented to the content column (`tests/fuzz.rs`, seed 2 round 930).
+    #[test]
+    fn a_list_item_keeps_its_second_block() {
+        let once = normalize("* >t\n\u{3000}\\").expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"), "{once:?}");
+        assert!(once.contains("  \\"), "{once:?}");
+        // A line at the outer column still ends the item.
+        let out = normalize("- a\n\nb\n").expect("normalize");
+        assert_eq!(out, "- a\n\nb\n");
+    }
+
+    /// Adjacent lists of one kind are a single list once written down, so
+    /// normalize writes them that way (`tests/fuzz.rs`, seed 1 round 1440).
+    #[test]
+    fn adjacent_lists_become_one_list() {
+        let once = normalize(" - \n\n* ").expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"), "{once:?}");
+        assert_eq!(normalize("- a\n\n- b\n").unwrap(), "- a\n- b\n");
+        // Ordered and unordered stay apart: they really are two lists.
+        assert_eq!(normalize("- a\n\n1. b\n").unwrap(), "- a\n\n1. b\n");
+    }
+
+    /// A setext heading written over two lines becomes one ATX line, and
+    /// stays that way (`tests/fuzz.rs`, seed 1 round 581).
+    #[test]
+    fn multi_line_headings_become_one_line() {
+        let once = normalize(")\n~\n---\n").expect("normalize");
+        assert_eq!(once, "## ) ~\n");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        let once = normalize("Title\nline two\n===\n").expect("normalize");
+        assert_eq!(once, "# Title line two\n");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+    }
+
+    /// Alignment is part of the fixed point: `:---` and `---` mean the same
+    /// thing, so normalize writes the bare form and a second pass agrees.
+    #[test]
+    fn table_alignment_normalizes_to_a_fixed_point() {
+        let once = normalize("+|=\n-\n").expect("normalize");
+        assert_eq!(once, "| + | = |\n| --- | --- |\n");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        for text in [
+            "| a | b |\n| :--- | ---: |\n| 1 | 2 |\n",
+            "| a | b |\n| :---: | :--- |\n| 1 | 2 |\n",
+            "| a | b |\n| --- | --- |\n| 1 | 2 |\n",
+        ] {
+            let once = normalize(text).expect("normalize");
+            assert_eq!(once, normalize(&once).expect("normalize twice"), "{text:?}");
+        }
+        // Explicit centre and right survive; left does not need a colon.
+        assert_eq!(
+            normalize("| a | b |\n| :---: | ---: |\n| 1 | 2 |\n").unwrap(),
+            "| a | b |\n| :---: | ---: |\n| 1 | 2 |\n"
+        );
+    }
+
+    /// The second thing `tests/fuzz.rs` found, shrunk to four characters:
+    /// converting `_>_` to `*>*` turned the stray underscores around it
+    /// into an emphasis pair, so the next pass had something new to convert.
+    #[test]
+    fn emphasis_rewrites_never_create_a_new_pair() {
+        let once = normalize("__<_>_\n").expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        assert_eq!(once, "__<*>*\n");
+        // The canonical rewrite still happens where it is safe…
+        assert_eq!(normalize("_soft_\n").unwrap(), "*soft*\n");
+        assert_eq!(normalize("__loud__\n").unwrap(), "**loud**\n");
+        // …and not where the marker would collide with what is beside it.
+        for text in ["*_x_*", "_a*b_", "_ x _", "a_b_c"] {
+            let once = normalize(text).expect("normalize");
+            assert_eq!(once, normalize(&once).expect("normalize twice"), "{text:?}");
+        }
+    }
+
+    /// The failure that `tests/fuzz.rs` found first (seed 1, round 5): a
+    /// stray backtick run in a paragraph used to gain padding spaces on the
+    /// first pass, and those spaces let the second pass read the run
+    /// differently — normalize changed its own output.
+    #[test]
+    fn code_spans_normalize_to_a_fixed_point() {
+        let input = "<table>&amp;-->{`</script>%|:--|(\u{1f600}b___<table><p>```:::![[}\
+                     <table>| --- |\n<script><p>|||\u{e9}|===<tr></div>[^1]: note![%- [^1]'|:<script>";
+        let once = normalize(input).expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        // Every other shape of backtick run is stable too.
+        for text in [
+            "```",
+            "` ` `",
+            "`` ` ``",
+            "``x`` and `y`",
+            "`a` ``b`` ```c```",
+            "``a`b``",
+            "` `",
+        ] {
+            let once = normalize(text).expect("normalize");
+            assert_eq!(once, normalize(&once).expect("normalize twice"), "{text:?}");
+        }
+        // A span that needs no padding still loses its surplus backticks and
+        // its padding, which is the whole point of the pass.
+        assert_eq!(normalize("`` x ``\n").unwrap(), "`x`\n");
+        assert_eq!(normalize("`  y  `\n").unwrap(), "`y`\n");
+    }
+
+    #[test]
+    fn deep_block_nesting_stays_text_instead_of_crashing() {
+        let quoted = format!("{}deep\n", "> ".repeat(2_000));
+        let once = normalize(&quoted).expect("normalize");
+        assert!(once.contains("deep"), "{once}");
+        assert_eq!(normalize(&once).unwrap(), once);
+        let listed = "> - ".repeat(1_000) + "deep\n";
+        assert!(normalize(&listed).unwrap().contains("deep"));
+    }
+
     #[test]
     fn style_specs_cover_presets_and_lists() {
         assert_eq!(Style::parse_spec("github").unwrap(), Style::default());

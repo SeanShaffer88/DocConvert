@@ -30,7 +30,7 @@ pub mod toc;
 /// `tests/file_io.rs` pins the numeric parts and the shipped header to it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const VERSION_MAJOR: u32 = 0;
-pub const VERSION_MINOR: u32 = 11;
+pub const VERSION_MINOR: u32 = 12;
 pub const VERSION_PATCH: u32 = 0;
 
 // Error codes (mirror include/docconvert.h).

@@ -83,9 +83,11 @@ block by block), `--options '{...}'`; `normalize` adds
 `--style github|asterisk|underscore|backtick|tilde` (or a list such as
 `--style underscore,tilde` — one flag for both, later flags win);
 `--flag=value` is
-accepted too. Formats fall back to the file extensions, and stdin or
-stdout without an inferable format is an argument error rather than a
-guess.
+accepted too. A flag wins over the same key in `--options`, whatever
+order the two appear in — so `--front-matter table --options
+'{"front_matter":"strip"}'` is a table, not a silent surprise. Formats
+fall back to the file extensions, and stdin or stdout without an
+inferable format is an argument error rather than a guess.
 
 Exit codes: `0` ok, `1` invalid argument, `2` conversion not supported,
 `3` file not found, `4` access denied, `5` platform error, `6` internal
@@ -116,6 +118,11 @@ Register it with any MCP-capable client:
 | `toc` | `{input\|path, from?, format?}` — the headings as a nested Markdown list, nested `<ul>`, or `[{level,text,anchor}]`. |
 | `normalize` | `{input, emphasis?, fence?}` — the same Markdown, rewritten canonically. |
 | `formats`, `matrix`, `capabilities` | The same JSON introspection the CLI prints. |
+
+`initialize` answers a known protocol revision with itself and an
+unknown *date-shaped* one with the newest revision this server speaks;
+a version that is not date-shaped at all (`2025-6-18`) is refused with
+`-32602`, so a typo is distinguishable from a newer client.
 
 Failures are written for the model to read: a conversion problem comes
 back as a tool result with `isError: true` and text like
@@ -224,9 +231,10 @@ be a lie rather than an optimisation.
 
 ## The matrix (v0.9)
 
-markdown→html, markdown→text, markdown→csv and markdown→tsv (a document
-that is one table), html→markdown, html→text, html→csv, html→tsv,
-html→json (the first `<table>`), text→html, text→markdown, csv→json,
+markdown→html, markdown→text, markdown→csv/tsv/json (a document that is
+one table, optionally behind one heading), html→markdown, html→text,
+html→csv, html→tsv, html→json (the first `<table>`), text→html,
+text→markdown, csv→json,
 tsv→json, json→csv, json→tsv, csv↔tsv, csv→markdown (table),
 tsv→markdown (table), csv→html (table), tsv→html (table), csv→text,
 tsv→text, json→text/html/markdown (pretty-printed, fenced for
@@ -234,14 +242,16 @@ Markdown), plus identity conversions that validate and normalize (JSON
 pretty-prints, CSV and TSV re-quote canonically).
 
 **TSV mirrors CSV everywhere**: wherever CSV is a source or a target,
-TSV is too — same rows, tab as the delimiter.
+TSV is too — same rows, tab as the delimiter. **Markdown mirrors HTML
+where it can**: `markdown → json` is the same first-table extraction
+`html → json` performs, read through the Markdown table parser.
 
 **Document syntaxes** are read into Markdown and rendered by the
 Markdown renderers, so `rst → html` and `rst → markdown` can never
 disagree: `rst → markdown|html|text` and `asciidoc → markdown|html|text`.
 **OPML** goes both ways — `opml → markdown|html|text` (an outline as
 nested bullets, `_note` kept as the item's text) plus `markdown → opml`
-and `html → opml` (a document's headings as the outline). 37 pairs in
+and `html → opml` (a document's headings as the outline). 38 pairs in
 all.
 
 `convert::MATRIX` is the single source of truth: `dc_matrix_json()` is
@@ -265,9 +275,10 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
 - **Front matter**: a leading `---` block is parsed as a YAML subset
   (flat keys, nested maps, `- item` lists, inline `[a, b]` lists,
   `|`/`>` block scalars). Numbers and booleans become JSON scalars,
-  with the same guard as CSV→JSON: leading-zero codes like `007`
-  stay strings. Malformed front matter is left in the document
-  rather than silently swallowed.
+  with the same rule as CSV→JSON (below): only text that *is* a JSON
+  number becomes one, so leading-zero codes like `007` — and look-alikes
+  like `.5` or `1.` — stay strings. Malformed front matter is left in
+  the document rather than silently swallowed.
 - **HTML reader**: a forgiving DOM parser — entities (named +
   numeric), attributes, void elements; script/style contents are
   dropped. Tables become GFM tables, and **html→csv** lifts the first
@@ -302,7 +313,11 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   attributes. The outline of a document is its headings.
 - **JSON**: full parser (key order preserved, numbers kept as
   source text so nothing loses precision, surrogate pairs handled)
-  and compact/pretty serializers.
+  and compact/pretty serializers. Numbers are validated against JSON's
+  grammar, not `f64`'s: `01`, `1.` and `+1` are refused on the way in
+  and never written on the way out, so every document DocConvert emits
+  parses. Nesting is capped (128 levels) instead of overflowing the
+  stack.
 
 ## Verification
 
@@ -317,14 +332,23 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   document readers (tables included), the OPML round-trip, the normalize
   style layer and the streaming file paths — each streamed conversion is
   asserted equal to its whole-document reference.
+- **A seeded sweep** (`tests/fuzz.rs`): a deterministic generator builds
+  documents from the fragments that hurt these parsers before — pipe and
+  fence runs, emphasis runs, HTML brackets, absurd nesting, odd
+  whitespace — and asserts that nothing panics, that `normalize` is
+  idempotent (its output normalizes to itself), and that any JSON written
+  parses back. Failures name the seed, the round and the input, so a
+  report reproduces with no other state. The default sweep runs in CI;
+  `cargo test --release -- --ignored` runs the long one.
 - **External cross-check**: the sample document in
   `tests/fixtures/sample.md` was rendered by **marked** (a mainstream
   Markdown engine) and by DocConvert — the outputs are structurally
   identical (verified locally when the fixture was added, and the
   test pins our structure so regressions surface in CI).
-- Gate (WinDevKit `tools/gate.sh`): fmt, clippy (host + Windows
-  target) with `-D warnings`, full suite — green. Pure logic, no
-  Win32 calls.
+- Gate (`tools/gate.sh`, the same four steps CI runs): fmt, clippy
+  with `-D warnings`, full suite, release build — green. Pure logic, no
+  Win32 calls. `ci.yml` and `release.yml` live only in
+  `.github/workflows/` now: one canonical copy each, nothing to drift.
 
 ## Scope limits (v0.9)
 
@@ -338,6 +362,13 @@ numbers footnotes some other way still converts, just without the
 `[^n]` markers.
 HTML: expects roughly well-formed input (no tag-soup repair
 heuristics); html→csv uses the first table only and ignores spans.
+Elements may nest 256 deep — past that the input is `DC_ERR_CORRUPT`
+rather than a stack overflow, because the renderers (and the tree's own
+`Drop`) walk a frame per level; Markdown blocks are capped the same way
+(48 levels), where the excess stays literal text instead of erroring.
+CSV/TSV cells and YAML scalars become JSON numbers only when they *are*
+JSON numbers — `1.`, `.5`, `+1` and `007` stay strings, so the JSON
+DocConvert writes always parses.
 CSV→JSON always uses the first row as headers. `toc` understands ATX
 and setext headings in Markdown and `<h1>`–`<h6>` in HTML — a document
 with no headings yields an empty table of contents, and a source that
