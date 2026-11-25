@@ -457,7 +457,16 @@ fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes, style: Style
         ),
         Block::Code(info, body) => {
             let text = body.trim_end_matches('\n');
-            let fence = fence_for(text, style.fence);
+            // A backtick fence cannot carry a backtick in its info string: a
+            // tilde fence with a backtick info string would be written as four
+            // backticks and read back as a longer fence. Those blocks keep
+            // tildes, whatever the style says.
+            let wanted = if info.contains('`') {
+                Fence::Tilde
+            } else {
+                style.fence
+            };
+            let fence = fence_for(text, wanted);
             // An empty block is two lines, not three: the stray blank line
             // between the fences was read back as a body line, and inside a
             // list item the indented closing fence then became a block of its
@@ -590,7 +599,7 @@ fn normalize_inline(text: &str, marker: char) -> String {
                 // different run structure on the next pass — normalize would
                 // then not be idempotent, and repeating it would keep
                 // changing the document. Such a span stays byte for byte.
-                if !trimmed.is_empty() && !trimmed.starts_with('`') && !trimmed.ends_with('`') {
+                if !trimmed.is_empty() && !trimmed.contains('`') {
                     out.push('`');
                     out.push_str(trimmed);
                     out.push('`');
@@ -1927,6 +1936,13 @@ mod tests {
         assert_eq!(normalize("- ~~~\n").unwrap(), "- ```\n  ```\n");
         let once = normalize("- ~~~\n").unwrap();
         assert_eq!(once, normalize(&once).unwrap());
+        // An info string with a backtick cannot live on a backtick fence.
+        assert_eq!(normalize("~~~`\n").unwrap(), "~~~`\n~~~\n");
+        let once = normalize("~~~`\n").unwrap();
+        assert_eq!(once, normalize(&once).unwrap());
+        // An inline span whose text holds a backtick is left byte for byte.
+        let once = normalize("```\\``😀``").unwrap();
+        assert_eq!(once, normalize(&once).unwrap(), "{once:?}");
     }
 
     /// Alignment is part of the fixed point: `:---` and `---` mean the same
