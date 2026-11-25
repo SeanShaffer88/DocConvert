@@ -140,6 +140,24 @@ pub extern "C" fn dc_formats_json() -> *mut c_char {
     finish_str(guard(|| Ok(convert::formats_json())))
 }
 
+fn convert_impl(
+    input: *const c_char,
+    from_format: *const c_char,
+    to_format: *const c_char,
+    options_json: *const c_char,
+) -> *mut c_char {
+    finish_str(guard(|| {
+        let input = req_str(input, "input")?;
+        let from = req_str(from_format, "from_format")?;
+        let to = req_str(to_format, "to_format")?;
+        let options = match opt_str(options_json)? {
+            Some(text) => convert::Options::from_json(&text)?,
+            None => convert::Options::default(),
+        };
+        convert::convert_with_options(&input, &from, &to, &options)
+    }))
+}
+
 /// Convert text between formats ("markdown"/"md", "html", "csv",
 /// "json", "text"/"txt"). Returns the converted string or null.
 /// # Safety (caller contract): all pointers are valid C strings.
