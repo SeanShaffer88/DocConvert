@@ -11,7 +11,7 @@ use std::process::ExitCode;
 
 use docconvert::convert::{self, FrontMatterMode, Options};
 use docconvert::platform;
-use docconvert::{CResult, ERR_CORRUPT, ERR_INVALID_ARG, ERR_PLATFORM};
+use docconvert::{error_message, CResult, ERR_CORRUPT, ERR_INVALID_ARG, ERR_PLATFORM};
 
 const USAGE: &str = r#"docconvert — document conversion on the command line.
 Markdown, HTML, CSV, JSON and plain text; the same matrix as the DLL.
@@ -58,7 +58,7 @@ fn main() -> ExitCode {
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err((code, message)) => {
-            eprintln!("docconvert: {message}");
+            eprintln!("docconvert: {}", error_message(&message));
             ExitCode::from(code.clamp(0, 255) as u8)
         }
     }
@@ -105,12 +105,9 @@ fn capabilities() -> String {
         ",\"commands\":[\"convert\",\"frontmatter\",\"formats\",\"matrix\",\
          \"capabilities\",\"version\",\"help\"]",
     );
-    out.push_str(
-        ",\"exit_codes\":{\"0\":\"ok\",\"1\":\"invalid argument\",\
-         \"2\":\"conversion not supported\",\"3\":\"file not found\",\
-         \"4\":\"access denied\",\"5\":\"platform error\",\
-         \"6\":\"internal error\",\"7\":\"input failed to parse\"}}",
-    );
+    out.push_str(",\"error_codes\":");
+    out.push_str(&convert::error_codes_json());
+    out.push('}');
     out
 }
 
@@ -178,15 +175,7 @@ fn cmd_convert(raw_args: &[String]) -> CResult<()> {
         None => Options::default(),
     };
     if let Some(mode) = args.front_matter {
-        options.front_matter = match mode.trim().to_lowercase().as_str() {
-            "strip" | "none" => FrontMatterMode::Strip,
-            "table" | "keep" => FrontMatterMode::Table,
-            other => {
-                return Err(invalid(format!(
-                    "unknown --front-matter mode '{other}' (strip or table)"
-                )))
-            }
-        };
+        options.front_matter = FrontMatterMode::parse(&mode)?;
     }
     let input = match args.input.as_deref() {
         Some(path) if path != "-" => read_file(path)?,
@@ -349,7 +338,7 @@ mod tests {
         match value {
             docconvert::json::Json::Object(entries) => {
                 assert!(entries.iter().any(|(key, _)| key == "matrix"));
-                assert!(entries.iter().any(|(key, _)| key == "exit_codes"));
+                assert!(entries.iter().any(|(key, _)| key == "error_codes"));
             }
             other => panic!("capabilities should be an object, got {other:?}"),
         }

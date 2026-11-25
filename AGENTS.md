@@ -27,6 +27,14 @@
   (skipping fenced code) and normalized with `normalize_label`
   (trim + collapse whitespace + lowercase). Labels are looked up at
   inline-render time, so `Refs` is threaded through every renderer.
+- The MCP server lives in `src/mcp.rs` (protocol, tools, unit tests)
+  with the thin stdio entry point in `src/mcp_main.rs`
+  (`docconvert-mcp.exe`). It calls the library directly — never spawn
+  the CLI — and must stay dependency-free too: no MCP SDK. stdout is
+  the protocol stream and nothing else; diagnostics go to stderr. Tool
+  failures are `isError: true` results carrying the `DC_*` code, while
+  protocol faults are JSON-RPC errors. `tests/mcp.rs` drives the real
+  binary through `CARGO_BIN_EXE_docconvert-mcp`.
 - The CLI lives in `src/main.rs` and must stay dependency-free: the
   hand-rolled parser there is the whole of it. It is what local AI
   agents use, so keep it boring and machine-friendly: JSON

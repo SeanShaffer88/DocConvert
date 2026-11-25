@@ -1,5 +1,15 @@
 # DocConvert roadmap
 
+## Shipped in v0.4
+
+- **MCP server** (`docconvert-mcp.exe`): the same conversions as Model
+  Context Protocol tools over stdio, for local AI clients that would
+  otherwise shell out to the CLI. Tool errors carry the `DC_*` code so
+  a model can tell "unsupported pair" from "file missing"; the protocol
+  and the JSON are still hand-written, so nothing new is pulled in.
+- Introspection is shared three ways now: the ABI, the CLI and the MCP
+  server all describe the build from `convert::*_json`.
+
 ## Shipped in v0.3
 
 - **Command line front end** (`docconvert.exe`) with the same matrix:
