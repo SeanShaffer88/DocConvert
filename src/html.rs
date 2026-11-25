@@ -100,6 +100,14 @@ pub(crate) fn parse_html(input: &str) -> CResult<Vec<Node>> {
                         {
                             k += 1;
                         }
+                        // A `/` that does not introduce `/>` (as in `<a/b>`,
+                        // or `<a]: https://e.com` where the attribute scan
+                        // lands on the second slash) cannot start a name: skip
+                        // it, or this loop spins on the same byte forever.
+                        if k == a_start {
+                            k += 1;
+                            continue;
+                        }
                         let a_name: String =
                             bytes[a_start..k].iter().collect::<String>().to_lowercase();
                         while k < bytes.len() && bytes[k].is_whitespace() {
@@ -944,6 +952,25 @@ mod tests {
         let md = html_to_markdown("<p>x<sup>2</sup></p>").unwrap();
         assert!(md.contains("x2"), "{md}");
         assert!(!md.contains("[^"), "{md}");
+    }
+
+    /// A stray `/` inside a tag used to leave the attribute loop on the same
+    /// byte forever — an infinite loop in the DLL, which is worse than a
+    /// crash because the host never gets control back.
+    #[test]
+    fn stray_slashes_in_a_tag_are_skipped() {
+        for input in [
+            "<div /x>text",
+            "<a/b>text",
+            "<a]: https://e.com<tr>x",
+            "<div / / / >x",
+            "<div attr=/x>y",
+        ] {
+            assert!(html_to_markdown(input).is_ok(), "{input:?} must not hang");
+        }
+        // The self-closing form still works, and still closes the element.
+        let md = html_to_markdown("<br/>a<br />b").expect("self-closing br");
+        assert!(md.contains('a') && md.contains('b'), "{md:?}");
     }
 
     #[test]
