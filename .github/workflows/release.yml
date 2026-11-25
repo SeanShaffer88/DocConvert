@@ -26,6 +26,7 @@ jobs:
           Copy-Item "target/release/docconvert.exe" $stage
           Copy-Item "target/release/docconvert-mcp.exe" $stage
           Copy-Item "examples/convert_demo.c" $stage
+          Copy-Item "assets/docconvert.ico" $stage
           Copy-Item "include/docconvert.h" $stage
           Copy-Item LICENSE $stage
           Copy-Item README.md $stage

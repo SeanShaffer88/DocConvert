@@ -136,6 +136,13 @@
   widen it: a typed command or a script must never block on stdin, so
   the predicate stays "no arguments **and** a console that exists for us
   alone", and non-Windows always answers false.
+- The exe icon is a resource, not a dependency: `build_support/win_icon.rs`
+  (included by `build.rs` and by `tests/windows_icon.rs`) turns
+  `assets/docconvert.ico` into a `.rsrc` COFF object and hands it to the
+  linker with `rustc-link-arg-bins`/`-cdylib`. If you change the icon,
+  regenerate the `.ico` with all six sizes and keep the test green — it
+  reads the section back per the PE spec, which is the only check that can
+  run before Windows links it.
 - Gate: WinDevKit tools/gate.sh (fmt + clippy -D warnings BOTH
   targets + FULL tests). This crate's match-heavy code attracts
   collapsible-match lints; prefer guards from the start.

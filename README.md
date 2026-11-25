@@ -1,5 +1,7 @@
 # DocConvert
 
+<img src="assets/docconvert.png" width="96" alt="DocConvert icon">
+
 Document conversion between **Markdown, HTML, CSV, TSV, JSON, plain
 text, reStructuredText, AsciiDoc, and OPML** behind one clean C ABI —
 pure Rust, zero dependencies, every parser hand-written. Library #16 in the Windows DLL Collection. The
@@ -30,6 +32,11 @@ Press Enter to close this window.
 Run it from PowerShell, `cmd`, or any terminal — `Shift`-right-click a
 folder and choose *Open PowerShell window here*, then
 `.\docconvert.exe capabilities`.
+
+Both executables and the DLL carry the product icon
+(`assets/docconvert.ico`, embedded through `build_support/win_icon.rs` —
+no resource compiler, no dependency), so Explorer and the taskbar show a
+document rather than a generic console glyph.
 
 The release binaries are unsigned, so Windows may warn the first time,
 and a zip that came through a browser carries the *mark of the web*:
