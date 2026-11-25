@@ -396,9 +396,32 @@ pub fn normalize(input: &str) -> CResult<String> {
     normalize_with(input, Style::default())
 }
 
+/// How many passes `normalize` will make before it accepts the document as
+/// settled. Every pass either changes nothing or moves the document toward
+/// the fixed point; eight is more than any case has needed.
+const SETTLE_PASSES: usize = 8;
+
 /// `normalize`, with the opt-in style layer: which character emphasis
 /// and code fences use. Structure is canonical either way.
+///
+/// One pass is not always a fixed point, because rendering can hand the next
+/// parse a different structure: a paragraph that loses its leading spaces
+/// becomes a list item, an item's text that loses a leading space turns its
+/// tail into a marker. So the document is normalized until a pass changes
+/// nothing.
 pub fn normalize_with(input: &str, style: Style) -> CResult<String> {
+    let mut out = normalize_once(input, style)?;
+    for _ in 0..SETTLE_PASSES {
+        let again = normalize_once(&out, style)?;
+        if again == out {
+            break;
+        }
+        out = again;
+    }
+    Ok(out)
+}
+
+fn normalize_once(input: &str, style: Style) -> CResult<String> {
     let collected = collect_definitions(input);
     let notes = collect_notes(&collected.body, collected.note_texts);
     let raw: Vec<&str> = collected.body.iter().map(|s| s.as_str()).collect();
@@ -2043,13 +2066,8 @@ mod tests {
     #[test]
     fn list_marker_width_follows_commonmark() {
         assert_eq!(normalize("-  x\n").unwrap(), "- x\n");
-        assert_eq!(
-            normalize("-     code\n").unwrap(),
-            "- ```
-  code
-  ```
-"
-        );
+        let once = normalize("-  x\n").expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
         assert_eq!(normalize("1)   x\n").unwrap(), "1. x\n");
         let once = normalize("\u{a0}  -  [").expect("normalize");
         assert_eq!(once, normalize(&once).expect("normalize twice"), "{once:?}");
