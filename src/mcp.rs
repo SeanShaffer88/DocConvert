@@ -157,10 +157,8 @@ pub fn handle_line(line: &str) -> Option<String> {
         _ => return None, // a client response, or a message with no method
     };
     let params = field_of(&entries, "params").cloned();
-    let id = match id {
-        Some(id) => id,
-        None => return None, // notification
-    };
+    // No id means a notification: it gets no reply.
+    let id = id?;
     match method.as_str() {
         "initialize" => Some(response(&id, initialize_result(params.as_ref()))),
         "ping" => Some(response(&id, object(vec![]))),
