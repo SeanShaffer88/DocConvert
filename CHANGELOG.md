@@ -13,7 +13,7 @@ Versioning for the C ABI (`dc_*` symbols, error codes).
   is quoted and stays lossless. `tsv`, `tab` and `.tsv` are recognized,
   and **TSV mirrors CSV everywhere** — csv↔tsv, tsv→json, json→tsv,
   tsv→markdown, tsv→html, tsv→text, html→tsv, markdown→tsv — bringing
-  the matrix to 25 pairs.
+  the matrix to 26 pairs.
 - One row model behind it: `parse_csv`/`parse_tsv`,
   `html::html_rows` and `markdown::markdown_rows` feed
   `rows_to_json` / `rows_to_markdown_table` / `rows_to_html_table` and

@@ -5,7 +5,7 @@
 - **TSV as a first-class format**: the CSV grammar with a tab for the
   comma (cells containing a tab are quoted, so nothing is lost), and
   the rule that wherever CSV is a source or target, TSV is too — nine
-  new pairs, 25 in total.
+  new pairs, 26 in total.
 - **Footnote back-references in html→markdown**: `<sup>` + `#fn-…`
   becomes `[^n]`, and a `<section class="footnotes">` block becomes
   `[^n]: note` definitions, so footnotes survive the round trip.
