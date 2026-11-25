@@ -4,6 +4,18 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [Unreleased]
+
+### Changed
+
+- The release number is written once, in `Cargo.toml`: `VERSION` now
+  derives from `CARGO_PKG_VERSION` (as `dc_version` already did), and
+  `tests/file_io.rs::version_is_one_source_of_truth` fails unless the
+  numeric `VERSION_*` parts and the `DocConvert.dll vX.Y.Z` banner in
+  `include/docconvert.h` match it. No behaviour change.
+- CI can be re-run on demand: `ci.yml` gained `workflow_dispatch`, so a
+  branch's gate can be started without a new push.
+
 ## [0.10.0] — 2026-11-25
 
 ### Added

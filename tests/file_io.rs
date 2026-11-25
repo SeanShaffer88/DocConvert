@@ -25,6 +25,29 @@ fn path(p: &std::path::Path) -> CString {
     cs(p.to_str().expect("UTF-8 scratch path"))
 }
 
+/// The shipped C header names the release in its banner, so a bump has to
+/// reach it too — and the numeric parts cannot drift from the string.
+#[test]
+fn version_is_one_source_of_truth() {
+    let header = include_str!("../include/docconvert.h");
+    let banner = format!("DocConvert.dll v{}", docconvert::VERSION);
+    assert!(
+        header.contains(&banner),
+        "header banner says: {}",
+        &header[..60]
+    );
+
+    assert_eq!(
+        format!(
+            "{}.{}.{}",
+            docconvert::VERSION_MAJOR,
+            docconvert::VERSION_MINOR,
+            docconvert::VERSION_PATCH
+        ),
+        docconvert::VERSION
+    );
+}
+
 #[test]
 fn version_is_reported() {
     let version = unsafe { CStr::from_ptr(dc_version()) }.to_string_lossy();
