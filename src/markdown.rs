@@ -601,8 +601,19 @@ fn normalize_inline(text: &str, marker: char) -> String {
             if opens && starts_word && run <= 2 {
                 if let Some(close) = find_run(&chars, i + run, run) {
                     let ends_word = close > i + run && !chars[close - 1].is_whitespace();
-                    if ends_word {
-                        let inner: String = chars[i + run..close].iter().collect();
+                    let inner: String = chars[i + run..close].iter().collect();
+                    // Only a rewrite that reads back the same way counts. If
+                    // the marker would touch another emphasis character (or
+                    // the span's own text holds one), the new run could pair
+                    // with it on the next pass — `__<_>_` became `_*<*>_`
+                    // and then `**<*>*`. Those spans stay as written.
+                    let before = i.checked_sub(1).map(|index| chars[index]);
+                    let after = chars.get(close + run).copied();
+                    let safe = [before, after]
+                        .iter()
+                        .all(|neighbour| *neighbour != Some(other) && *neighbour != Some(marker))
+                        && !inner.contains(marker);
+                    if ends_word && safe {
                         out.push_str(&marker.to_string().repeat(run));
                         out.push_str(&inner);
                         out.push_str(&marker.to_string().repeat(run));
@@ -1854,6 +1865,24 @@ mod tests {
 
     /// One flag for the pair: presets, and a comma list that reads in
     /// either order.
+    /// The second thing `tests/fuzz.rs` found, shrunk to four characters:
+    /// converting `_>_` to `*>*` turned the stray underscores around it
+    /// into an emphasis pair, so the next pass had something new to convert.
+    #[test]
+    fn emphasis_rewrites_never_create_a_new_pair() {
+        let once = normalize("__<_>_\n").expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        assert_eq!(once, "__<*>*\n");
+        // The canonical rewrite still happens where it is safe…
+        assert_eq!(normalize("_soft_\n").unwrap(), "*soft*\n");
+        assert_eq!(normalize("__loud__\n").unwrap(), "**loud**\n");
+        // …and not where the marker would collide with what is beside it.
+        for text in ["*_x_*", "_a*b_", "_ x _", "a_b_c"] {
+            let once = normalize(text).expect("normalize");
+            assert_eq!(once, normalize(&once).expect("normalize twice"), "{text:?}");
+        }
+    }
+
     /// The failure that `tests/fuzz.rs` found first (seed 1, round 5): a
     /// stray backtick run in a paragraph used to gain padding spaces on the
     /// first pass, and those spaces let the second pass read the run
