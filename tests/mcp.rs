@@ -442,6 +442,13 @@ fn normalize_tool_takes_a_style() {
         "{converted:?}"
     );
 
+    let preset = session.call(
+        "normalize",
+        "{\"input\":\"_soft_\\n\",\"style\":\"underscore,tilde\"}",
+    );
+    assert!(!is_error(&preset), "{preset:?}");
+    assert_eq!(text_of(&preset), "_soft_\n");
+
     let bad = session.call("normalize", "{\"input\":\"x\",\"fence\":\"pdf\"}");
     assert!(is_error(&bad), "{bad:?}");
     assert!(text_of(&bad).contains("(code 1)"), "{bad:?}");

@@ -59,6 +59,7 @@ $ docconvert convert -f rst -t html notes.rst notes.html
 $ docconvert convert -f md -t opml README.md outline.opml
 $ docconvert convert --stream -f md -t md big.md copy.md
 $ docconvert normalize --emphasis underscore --fence tilde notes.md
+$ docconvert normalize --style underscore,tilde notes.md
 ```
 
 `capabilities` is the one call a local AI (or a script) needs before
@@ -78,7 +79,9 @@ and `matrix` return those pieces alone.
 Flags: `-f/--from`, `-t/--to`, `-i/--input`, `-o/--output`,
 `--front-matter strip|table`, `--heading-ids`, `--stream` (file-to-file,
 block by block), `--options '{...}'`; `normalize` adds
-`--emphasis asterisk|underscore` and `--fence backtick|tilde`;
+`--emphasis asterisk|underscore`, `--fence backtick|tilde` and
+`--style github|asterisk|underscore|backtick|tilde` (or a list such as
+`--style underscore,tilde` — one flag for both, later flags win);
 `--flag=value` is
 accepted too. Formats fall back to the file extensions, and stdin or
 stdout without an inferable format is an argument error rather than a
@@ -129,7 +132,7 @@ errors. stdout carries protocol lines only.
 | `dc_convert_opts(input, from, to, options_json)` | Same, with options (`{"front_matter":"table"}`). |
 | `dc_convert_file(in, out, from, to)` | Convert a file; null format arguments detect from file extensions. |
 | `dc_convert_file_opts(in, out, from, to, options_json)` | Same, with options. |
-| `dc_convert_file_streaming(in, out, from, to)` | Bytes written, or negative; streams identity copies, text, CSV/TSV records and Markdown blocks. |
+| `dc_convert_file_streaming(in, out, from, to)` | Bytes written, or negative; streams identity copies, text, CSV/TSV records, Markdown blocks and the table pairs. |
 | `dc_front_matter_json(input)` | The YAML front matter as JSON (`{}` when absent). |
 | `dc_toc_json(input, from)` | The headings as `[{"level":2,"text":"…","anchor":"…"}]` (Markdown or HTML input). |
 | `dc_normalize(input, options_json)` | Canonical Markdown; options set `emphasis` and `fence`. |
@@ -212,6 +215,9 @@ the code contains them, so a block can never close early).
   footnotes, plus leading YAML front matter): if one appears it redoes
   the conversion from the whole file, so the output is identical either
   way and only the memory profile differs.
+- The table pairs stream too: `csv|tsv → markdown` writes the header from
+  the first record and one row per record after it, and
+  `markdown → csv|tsv` writes the table's records as it reads it.
 
 Everything else parses the whole document, because partial parsing would
 be a lie rather than an optimisation.
@@ -287,8 +293,10 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   quote blocks, comments, attribute and block-attribute lines
   (dropped), admonitions, `'''` breaks, description lists, and inline
   `*strong*`, `_emphasis_`, `+literal+`, `https://…[text]` and
-  `<<xref,text>>`. `|===` tables become GFM tables: one row per line,
-  first row header.
+  `<<xref,text>>`. `|===` tables become GFM tables, first row header:
+  `2+|` spans columns, `.2+|` spans rows, `a|`/`h|`/`l|` style prefixes
+  are dropped, cells may wrap across lines, and `[cols="1,2"]` fixes the
+  column count.
 - **OPML**: nested `<outline text="..." _note="...">`, read with the
   HTML reader (OPML is XML of the same shape) and written with escaped
   attributes. The outline of a document is its headings.
@@ -337,10 +345,15 @@ carries no headings (CSV, JSON, text) is `NOT_SUPPORTED`. `normalize`
 covers block structure, canonical inline markup (emphasis in the chosen
 marker, code spans without surplus backticks or padding) and the fence
 character; line breaks inside a paragraph are preserved because they are
-editorial. rST and AsciiDoc are subsets — their table support covers the
-single-line-cell forms, not spans or multi-line cells. Streaming covers
-identity copies, text, CSV/TSV records and Markdown blocks; every other
-pair needs the whole document to be correct. See ROADMAP.md.
+editorial. rST and AsciiDoc are subsets: their tables are flattened into
+GFM, so a cell that spans columns or rows keeps its text where the span
+starts and the covered cells are left empty, a wrapped cell is joined with
+single spaces, and column widths are advisory (GFM tables have none).
+Streaming covers identity copies, text, CSV/TSV records, Markdown blocks
+and the table pairs (markdown→csv needs one table, optionally behind one
+heading — a ragged CSV→markdown file falls back to the whole-document
+path, because a GFM table needs its widest row first); every other pair
+needs the whole document to be correct. See ROADMAP.md.
 
 ## License
 

@@ -291,6 +291,53 @@ pub struct Style {
 }
 
 impl Style {
+    /// A style spec: the same two choices, as one flag.
+    ///
+    /// Comma- or space-separated tokens, applied left to right so the last
+    /// one wins:
+    ///
+    /// - `github` — the default (asterisk emphasis, backtick fences);
+    /// - `asterisk` / `underscore` — the emphasis marker;
+    /// - `backtick` / `tilde` — the fence character;
+    /// - `emphasis=<x>` and `fence=<y>` — the same thing, spelled out, for
+    ///   config files that would rather not depend on token order.
+    pub fn parse_spec(spec: &str) -> CResult<Style> {
+        let mut style = Style::default();
+        let trimmed = spec.trim();
+        if trimmed.is_empty() {
+            return Ok(style);
+        }
+        for token in trimmed.split([',', ' ', '\t']).filter(|t| !t.is_empty()) {
+            let token = token.trim().to_lowercase();
+            match token.as_str() {
+                "github" | "default" => style = Style::default(),
+                "asterisk" | "star" | "emphasis=asterisk" | "emphasis=star" => {
+                    style.emphasis = Emphasis::Asterisk
+                }
+                "underscore" | "emphasis=underscore" | "emphasis=under" => {
+                    style.emphasis = Emphasis::Underscore
+                }
+                "backtick" | "backticks" | "fence=backtick" => style.fence = Fence::Backtick,
+                "tilde" | "tildes" | "fence=tilde" => style.fence = Fence::Tilde,
+                other => {
+                    return Err((
+                        crate::ERR_INVALID_ARG,
+                        format!(
+                            "unknown normalize style '{other}' (try github, asterisk, \
+                             underscore, backtick or tilde)"
+                        ),
+                    ))
+                }
+            }
+        }
+        Ok(style)
+    }
+
+    /// The presets `capabilities` advertises and `--style` accepts alone.
+    pub fn presets() -> &'static [&'static str] {
+        &["github", "asterisk", "underscore", "backtick", "tilde"]
+    }
+
     /// The ABI's style object, e.g. `{"emphasis":"underscore"}`.
     pub fn from_json(text: &str) -> CResult<Style> {
         use crate::json::{parse_json, Json};
@@ -320,6 +367,7 @@ impl Style {
             match key.as_str() {
                 "emphasis" => style.emphasis = Emphasis::parse(&text)?,
                 "fence" => style.fence = Fence::parse(&text)?,
+                "style" => style = Style::parse_spec(&text)?,
                 other => {
                     return Err((
                         crate::ERR_INVALID_ARG,
@@ -479,21 +527,31 @@ pub fn table(rows: &[Vec<String>]) -> String {
     if rows.is_empty() {
         return String::new();
     }
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
     let mut out = String::new();
     for (index, row) in rows.iter().enumerate() {
-        let cells: Vec<String> = row.iter().map(|cell| cell.replace('|', "\\|")).collect();
-        out.push_str("| ");
-        out.push_str(&cells.join(" | "));
-        out.push_str(" |\n");
+        out.push_str(&table_row_padded(row, width));
         if index == 0 {
             out.push('|');
-            for _ in &cells {
+            for _ in 0..width {
                 out.push_str(" --- |");
             }
             out.push('\n');
         }
     }
     out
+}
+
+/// One GFM table row, without the header separator — the piece a streamed
+/// CSV→Markdown conversion writes per record.
+pub fn table_row(cells: &[String]) -> String {
+    table_row_padded(cells, cells.len())
+}
+
+fn table_row_padded(row: &[String], width: usize) -> String {
+    let mut cells: Vec<String> = row.iter().map(|cell| cell.replace('|', "\\|")).collect();
+    cells.resize(width, String::new());
+    format!("| {} |\n", cells.join(" | "))
 }
 
 /// Canonical inline markup: emphasis in the *other* marker becomes the
@@ -1775,6 +1833,49 @@ mod tests {
             emphasis: Emphasis::Underscore,
             fence: Fence::Tilde,
         }
+    }
+
+    /// One flag for the pair: presets, and a comma list that reads in
+    /// either order.
+    #[test]
+    fn style_specs_cover_presets_and_lists() {
+        assert_eq!(Style::parse_spec("github").unwrap(), Style::default());
+        assert_eq!(
+            Style::parse_spec("underscore,tilde").unwrap(),
+            Style {
+                emphasis: Emphasis::Underscore,
+                fence: Fence::Tilde,
+            }
+        );
+        // Later tokens win, so a preset can be corrected after it.
+        assert_eq!(
+            Style::parse_spec("underscore tilde fence=backtick").unwrap(),
+            Style {
+                emphasis: Emphasis::Underscore,
+                fence: Fence::Backtick,
+            }
+        );
+        assert_eq!(
+            Style::parse_spec("emphasis=underscore,backtick").unwrap(),
+            Style {
+                emphasis: Emphasis::Underscore,
+                fence: Fence::Backtick,
+            }
+        );
+        assert_eq!(Style::parse_spec("  ").unwrap(), Style::default());
+        assert_eq!(
+            Style::parse_spec("pdf").unwrap_err().0,
+            crate::ERR_INVALID_ARG
+        );
+        // The ABI object accepts the same spec.
+        assert_eq!(
+            Style::from_json("{\"style\":\"underscore,tilde\"}").unwrap(),
+            Style {
+                emphasis: Emphasis::Underscore,
+                fence: Fence::Tilde,
+            }
+        );
+        assert!(Style::presets().contains(&"github"));
     }
 
     #[test]

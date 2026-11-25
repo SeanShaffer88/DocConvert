@@ -4,6 +4,39 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.11.0] — 2026-11-25
+
+### Added
+
+- **Spans and wrapped cells in the document readers.** reStructuredText
+  grid tables now accept a cell that spans columns (a missing `|`) or
+  rows (a missing `-` run in the separator) and cells written across
+  several lines; simple tables accept a continuation line whose stub
+  column is blank, and their rightmost column is unbounded as the spec
+  says. AsciiDoc tables accept `2+|` (column span), `.2+|` (row span),
+  style prefixes (`a|`, `h|`, `l|`), cells wrapped across lines and
+  `[cols="1,2"]`. GFM has no spans, so a span is flattened: the text
+  stays in the cell where it starts and the covered cells are empty. The
+  table writer also pads ragged rows now, so a short row cannot pull a
+  GFM table out of shape.
+- **The table pairs stream.** `csv|tsv → markdown` writes the header from
+  the first record and one row per record after it; `markdown → csv|tsv`
+  writes each table's records as it reads them. A ragged CSV cannot be
+  spelled as a GFM table without its widest row, so that case falls back
+  to the whole-document path — same bytes either way.
+- **`--style`**: one flag for the whole `normalize` style. A preset
+  (`github`, `asterisk`, `underscore`, `backtick`, `tilde`) or a list
+  (`underscore,tilde`, also `emphasis=…`/`fence=…`), applied left to
+  right so a later flag still wins. Available on the CLI, in the MCP
+  `normalize` tool and in `dc_normalize`'s options as `"style"`, and
+  listed in `capabilities`.
+
+### Fixed
+
+- AsciiDoc's `[cols="…"]` attribute is read instead of being discarded as
+  a source-language attribute, and empty cells no longer vanish (which
+  used to shift every column after them).
+
 ## [0.10.2] — 2026-11-25
 
 ### Added

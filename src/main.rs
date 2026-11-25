@@ -45,6 +45,9 @@ CONVERT FLAGS
 NORMALIZE FLAGS
       --emphasis <s>      asterisk (default) or underscore
       --fence <s>         backtick (default) or tilde
+      --style <s>         a preset for both: github (default), asterisk,
+                          underscore, backtick, tilde — or a list, e.g.
+                          "underscore,tilde"; later flags win
 
 EXAMPLES
   docconvert convert -f md -t html README.md README.html
@@ -122,7 +125,8 @@ fn capabilities() -> String {
         ",\"options\":{\"front_matter\":[\"strip\",\"table\"],\
          \"heading_ids\":[true,false],\
          \"normalize\":{\"emphasis\":[\"asterisk\",\"underscore\"],\
-         \"fence\":[\"backtick\",\"tilde\"]}}",
+         \"fence\":[\"backtick\",\"tilde\"],\
+         \"style\":[\"github\",\"asterisk\",\"underscore\",\"backtick\",\"tilde\"]}}",
     );
     out.push_str(
         ",\"commands\":[\"convert\",\"frontmatter\",\"toc\",\"normalize\",\
@@ -204,7 +208,7 @@ fn cmd_normalize(args: &[String]) -> CResult<()> {
         index += 1;
         let (flag, inline_value) = split_flag(raw);
         match flag.as_str() {
-            "--emphasis" | "--fence" | "-i" | "--input" | "-o" | "--output" => {
+            "--style" | "--emphasis" | "--fence" | "-i" | "--input" | "-o" | "--output" => {
                 let value = match inline_value {
                     Some(value) => value,
                     None => {
@@ -220,7 +224,9 @@ fn cmd_normalize(args: &[String]) -> CResult<()> {
                     "-i" | "--input" => input = Some(value),
                     "-o" | "--output" => output = Some(value),
                     "--emphasis" => style.emphasis = docconvert::markdown::Emphasis::parse(&value)?,
-                    _ => style.fence = docconvert::markdown::Fence::parse(&value)?,
+                    "--fence" => style.fence = docconvert::markdown::Fence::parse(&value)?,
+                    // One flag for the pair; later flags still win.
+                    _ => style = docconvert::markdown::Style::parse_spec(&value)?,
                 }
             }
             other if other.starts_with('-') && other != "-" => {

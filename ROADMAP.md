@@ -1,5 +1,14 @@
 # DocConvert roadmap
 
+## Shipped in v0.11 — the rest of the table language
+
+- **Spans and wrapped cells**: rST grid and simple tables and AsciiDoc
+  `|===` tables now flatten column and row spans, multi-line cells and
+  `cols` attributes into GFM instead of refusing them.
+- **The table pairs stream**: `csv|tsv → markdown` and `markdown →
+  csv|tsv`, with the ragged case handed back to the whole-document path.
+- **`--style`**: one flag for the normalize style, on every surface.
+
 ## Shipped in v0.10 — the candidates
 
 - **rST and AsciiDoc tables**: simple and grid tables, and `|===`
