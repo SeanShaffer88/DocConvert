@@ -76,8 +76,8 @@
   anywhere else; the TOC must keep pointing at the ids the conversion
   writes.
 - `toc` is a view over headings, not a matrix pair: sources without
-  headings are NOT_SUPPORTED, and `convert::MATRIX` stays at 26 pairs
-  (markdown→markdown remains a byte-faithful identity).
+  headings are NOT_SUPPORTED. `convert::MATRIX` is 37 pairs;
+  markdown→markdown remains a byte-faithful identity.
 - `markdown::normalize` re-renders blocks canonically and must stay
   idempotent: definitions go last, inline prose is left as written, and
   `render_markdown_block` is the single place block shapes are printed.
@@ -87,6 +87,24 @@
 - `src/toc.rs` holds the TOC renderers (markdown / html / json) plus
   `depths`, which turns heading levels into nesting; the `<ul>`/`<li>`
   writer must stay balanced — the tests count tags for that reason.
+- The three document readers (`src/rst.rs`, `src/asciidoc.rs`,
+  `src/opml.rs`) all land as **Markdown** and are then rendered by the
+  Markdown renderers — that is why `rst → html` and `rst → markdown`
+  agree. Never render HTML or text straight out of a reader; add the
+  construct to the Markdown mapping instead.
+- OPML reads through `html::parse_html` (it is XML of the same shape;
+  `Node` and `parse_html` are `pub(crate)` for that reason) and writes
+  attributes through `opml::escape_attr`. A document's outline is its
+  headings: `markdown → opml` and `html → opml` both go through
+  `opml::from_headings`.
+- `normalize` canonicalizes inline markup through `normalize_inline`
+  (asterisk emphasis, minimal code spans) but leaves paragraph line
+  breaks alone — they are editorial. It must stay idempotent.
+- Streaming exists only where it is exact: `platform::copy_file` is used
+  by `convert::convert_file_streaming` for identity conversions of the
+  byte-faithful formats (`BYTE_FAITHFUL`). Everything else parses the
+  whole document, because partial parsing would be a lie. Formats live
+  in `FORMATS`, pairs in `MATRIX`, aliases in `normalize_format`.
 - Gate: WinDevKit tools/gate.sh (fmt + clippy -D warnings BOTH
   targets + FULL tests). This crate's match-heavy code attracts
   collapsible-match lints; prefer guards from the start.

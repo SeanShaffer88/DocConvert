@@ -1,14 +1,16 @@
-//! DocConvert — document conversion between Markdown, HTML, CSV,
-//! JSON, and plain text behind one clean C ABI, in pure Rust with
-//! zero dependencies. Every parser is hand-written and scope-honest:
+//! DocConvert — document conversion between Markdown, HTML, CSV, TSV,
+//! JSON, plain text, reStructuredText, AsciiDoc and OPML behind one
+//! clean C ABI, in pure Rust with zero dependencies. Every parser is hand-written and scope-honest:
 //! the Markdown renderer covers the CommonMark constructs documents
 //! actually use (headings, emphasis, code, inline and reference
 //! links, lists, quotes, fenced code, GFM tables) and understands
 //! YAML front matter, the HTML reader handles the element set the
 //! Markdown writer emits plus common hand-written HTML and can lift
-//! a table out as CSV, CSV is RFC 4180, and JSON is a full
-//! parser/serializer.
+//! a table out as CSV, CSV and TSV are RFC 4180, JSON is a full
+//! parser/serializer, and the reStructuredText, AsciiDoc and OPML
+//! readers land as Markdown so every target agrees with the others.
 
+pub mod asciidoc;
 pub mod convert;
 pub mod csv;
 pub mod ffi;
@@ -17,12 +19,14 @@ pub mod html;
 pub mod json;
 pub mod markdown;
 pub mod mcp;
+pub mod opml;
 pub mod platform;
+pub mod rst;
 pub mod toc;
 
-pub const VERSION: &str = "0.8.0";
+pub const VERSION: &str = "0.9.0";
 pub const VERSION_MAJOR: u32 = 0;
-pub const VERSION_MINOR: u32 = 8;
+pub const VERSION_MINOR: u32 = 9;
 pub const VERSION_PATCH: u32 = 0;
 
 // Error codes (mirror include/docconvert.h).

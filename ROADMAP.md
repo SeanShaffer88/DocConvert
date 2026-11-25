@@ -1,5 +1,47 @@
 # DocConvert roadmap
 
+## Shipped in v0.9 — the roadmap, completed
+
+- **reStructuredText (subset)** as a source: sections by adornment
+  order, lists with indentation nesting, literal blocks, quotes,
+  transitions, comments/directives/field lists dropped, and the inline
+  subset including backtick links and roles. `rst → markdown|html|text`.
+- **AsciiDoc (subset)** as a source: `=` sections, `*`/`.` lists,
+  delimited blocks with `[source,lang]`, comments and attribute lines
+  dropped, admonitions, description lists, inline macros.
+  `asciidoc → markdown|html|text`.
+- **OPML, both ways**: an outline becomes nested bullets
+  (`opml → markdown|html|text`), and a document's headings become an
+  escaped `<outline>` tree (`markdown → opml`, `html → opml`).
+- **Inline normalization**: `_emphasis_`/`__strong__` become the
+  asterisk forms, code spans lose surplus backticks and padding.
+- **Streaming file API**: `dc_convert_file_streaming` (plus the MCP
+  `stream` flag and the CLI `--stream`) copies identity conversions in
+  64 KiB chunks; every other pair keeps the whole-buffer path, which is
+  what correctness requires.
+
+Both readers land as Markdown and are rendered by the Markdown
+renderers, so a document's Markdown, HTML and text never disagree; `toc`
+reads them with the same anchors. The matrix is 37 pairs.
+
+## Next
+
+Nothing is committed here: the roadmap as written is complete. The
+candidates below are deliberately small and only worth taking if they
+earn their keep.
+
+- **rST and AsciiDoc tables** — grid/simple tables and `|===` would
+  extend both readers to the one construct they still refuse.
+- **Emphasis style options for `normalize`** — an opt-in `*`/`_` and
+  code-fence style layer on top of today's canonical form.
+- **Streaming for more than identity** — only possible with a
+  block-at-a-time Markdown pipeline; the string API stays the contract.
+
+## Later
+
+- More formats behind the same matrix shape: AsciiDoc (full), DocBook,
+  MediaWiki.
+
 ## Shipped in v0.8
 
 - **Table of contents generator** — the headings of a Markdown or HTML

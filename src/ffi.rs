@@ -6,7 +6,7 @@
 
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_int};
+use std::os::raw::{c_char, c_int, c_longlong};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::convert;
@@ -254,6 +254,36 @@ fn convert_file_impl(
         let converted = convert::convert_with_options(&text, &from, &to, &options)?;
         crate::platform::write_file(&out_path, converted.as_bytes())
     }))
+}
+
+/// `dc_convert_file_streaming(in, out, from, to)` — converts a file and
+/// returns the bytes written, streaming the identity conversions
+/// (markdown, html, text, rst, asciidoc, opml copy byte for byte) in
+/// 64 KiB chunks instead of holding the document twice. Negative on
+/// error, with `dc_last_error()` set.
+#[no_mangle]
+pub extern "C" fn dc_convert_file_streaming(
+    in_path: *const c_char,
+    out_path: *const c_char,
+    from_format: *const c_char,
+    to_format: *const c_char,
+) -> c_longlong {
+    match guard(|| {
+        let in_path = req_str(in_path, "in_path")?;
+        let out_path = req_str(out_path, "out_path")?;
+        let from = opt_str(from_format)?;
+        let to = opt_str(to_format)?;
+        convert::convert_file_streaming(&in_path, &out_path, from.as_deref(), to.as_deref())
+    }) {
+        Ok(Ok(bytes)) => {
+            clear_error();
+            bytes as c_longlong
+        }
+        Ok(Err((code, message))) | Err((code, message)) => {
+            set_error(code, &message);
+            -1
+        }
+    }
 }
 
 /// JSON list of the `{from,to}` pairs this build supports — generated

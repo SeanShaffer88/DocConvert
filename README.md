@@ -1,8 +1,8 @@
 # DocConvert
 
-Document conversion between **Markdown, HTML, CSV, TSV, JSON, and
-plain text** behind one clean C ABI — pure Rust, zero dependencies, every
-parser hand-written. Library #16 in the Windows DLL Collection. The
+Document conversion between **Markdown, HTML, CSV, TSV, JSON, plain
+text, reStructuredText, AsciiDoc, and OPML** behind one clean C ABI —
+pure Rust, zero dependencies, every parser hand-written. Library #16 in the Windows DLL Collection. The
 same matrix also ships as a CLI and as an MCP server for local AI
 clients.
 
@@ -22,6 +22,9 @@ $ docconvert toc README.md
 - [DocConvert](#docconvert)
   - [Command line](#command-line-docconvertexe)
 $ docconvert normalize notes.md > canonical.md
+$ docconvert convert -f rst -t html notes.rst notes.html
+$ docconvert convert -f md -t opml README.md outline.opml
+$ docconvert convert --stream -f md -t md big.md copy.md
 ```
 
 `capabilities` is the one call a local AI (or a script) needs before
@@ -39,7 +42,8 @@ and `matrix` return those pieces alone.
 | `version`, `help` | Version string, usage. |
 
 Flags: `-f/--from`, `-t/--to`, `-i/--input`, `-o/--output`,
-`--front-matter strip|table`, `--heading-ids`, `--options '{...}'`;
+`--front-matter strip|table`, `--heading-ids`, `--stream` (file-to-file
+identity copies, chunk by chunk), `--options '{...}'`;
 `--flag=value` is
 accepted too. Formats fall back to the file extensions, and stdin or
 stdout without an inferable format is an argument error rather than a
@@ -69,7 +73,7 @@ Register it with any MCP-capable client:
 | Tool | Purpose |
 |---|---|
 | `convert` | `{input, from, to, front_matter?}` — the converted document as text. |
-| `convert_file` | `{input_path, output_path, from?, to?, front_matter?}` — writes the file, returns `{written, bytes, from, to}`; formats come from the extensions. |
+| `convert_file` | `{input_path, output_path, from?, to?, front_matter?, heading_ids?, stream?}` — writes the file, returns `{written, bytes, from, to}`; formats come from the extensions. |
 | `front_matter` | `{input}` or `{path}` — the YAML front matter as JSON (`{}` when absent). |
 | `toc` | `{input\|path, from?, format?}` — the headings as a nested Markdown list, nested `<ul>`, or `[{level,text,anchor}]`. |
 | `normalize` | `{input}` — the same Markdown, rewritten canonically. |
@@ -90,13 +94,14 @@ errors. stdout carries protocol lines only.
 | `dc_convert_opts(input, from, to, options_json)` | Same, with options (`{"front_matter":"table"}`). |
 | `dc_convert_file(in, out, from, to)` | Convert a file; null format arguments detect from file extensions. |
 | `dc_convert_file_opts(in, out, from, to, options_json)` | Same, with options. |
+| `dc_convert_file_streaming(in, out, from, to)` | Bytes written, or negative; identity conversions copy in 64 KiB chunks. |
 | `dc_front_matter_json(input)` | The YAML front matter as JSON (`{}` when absent). |
 | `dc_toc_json(input, from)` | The headings as `[{"level":2,"text":"…","anchor":"…"}]` (Markdown or HTML input). |
-| `dc_formats_json()` | `["markdown","html","csv","tsv","json","text"]` |
+| `dc_formats_json()` | `["markdown","html","csv","tsv","json","text","rst","asciidoc","opml"]` |
 | `dc_matrix_json()` | The supported `{from,to}` pairs, enumerable at runtime. |
 | `dc_version*`, `dc_last_error*`, `dc_free_string` | Version info, thread-local errors, disposal. |
 
-Format names accept aliases (`md`, `htm`, `txt`). Errors use the
+Format names accept aliases (`md`, `htm`, `txt`, `rest`, `adoc`). Errors use the
 shared 0–6 codes plus `DC_ERR_CORRUPT` (7) for parse failures, and
 unsupported pairs are `DC_ERR_NOT_SUPPORTED` — never a lossy guess.
 
@@ -150,7 +155,7 @@ written — it normalizes structure, not style — so running it twice
 changes nothing. `markdown→markdown` in the matrix stays a byte-faithful
 identity; normalization is opt-in.
 
-## The matrix (v0.8)
+## The matrix (v0.9)
 
 markdown→html, markdown→text, markdown→csv and markdown→tsv (a document
 that is one table), html→markdown, html→text, html→csv, html→tsv,
@@ -163,6 +168,14 @@ pretty-prints, CSV and TSV re-quote canonically).
 
 **TSV mirrors CSV everywhere**: wherever CSV is a source or a target,
 TSV is too — same rows, tab as the delimiter.
+
+**Document syntaxes** are read into Markdown and rendered by the
+Markdown renderers, so `rst → html` and `rst → markdown` can never
+disagree: `rst → markdown|html|text` and `asciidoc → markdown|html|text`.
+**OPML** goes both ways — `opml → markdown|html|text` (an outline as
+nested bullets, `_note` kept as the item's text) plus `markdown → opml`
+and `html → opml` (a document's headings as the outline). 37 pairs in
+all.
 
 `convert::MATRIX` is the single source of truth: `dc_matrix_json()` is
 generated from it, and `matrix_is_exact` asserts that every listed
@@ -201,6 +214,22 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   value itself contains a tab. CSV/TSV→JSON infers numbers, booleans
   and null — with one deliberate exception: leading-zero values like
   `007` stay strings, because they're codes, not quantities.
+- **reStructuredText**: sections by adornment order (underlined and
+  overlined), bullet and enumerated lists with indentation nesting,
+  literal blocks after `::`, block quotes, transitions, comments and
+  directives (dropped with their bodies), field lists, and inline
+  literals, `*emphasis*`, `**strong**`, backtick links
+  (`` `text <url>`_ ``) and roles. Grid and simple tables are out of
+  scope.
+- **AsciiDoc**: `= Title` sections, `*`/`**` and `.`/`..` lists,
+  `----`/`....` blocks with an optional `[source,lang]`, example and
+  quote blocks, comments, attribute and block-attribute lines
+  (dropped), admonitions, `'''` breaks, description lists, and inline
+  `*strong*`, `_emphasis_`, `+literal+`, `https://…[text]` and
+  `<<xref,text>>`. Tables are out of scope.
+- **OPML**: nested `<outline text="..." _note="...">`, read with the
+  HTML reader (OPML is XML of the same shape) and written with escaped
+  attributes. The outline of a document is its headings.
 - **JSON**: full parser (key order preserved, numbers kept as
   source text so nothing loses precision, surrogate pairs handled)
   and compact/pretty serializers.
@@ -214,7 +243,8 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   end to end through pipes, introspection JSON and exit codes in
   `tests/cli.rs`, and a full MCP session against the spawned server in
   `tests/mcp.rs`. Tables of contents and normalization are pinned in
-  all four layers (module tests, CLI, MCP, ABI).
+  all four layers (module tests, CLI, MCP, ABI), as are the three
+  document readers, the OPML round-trip and the streaming file path.
 - **External cross-check**: the sample document in
   `tests/fixtures/sample.md` was rendered by **marked** (a mainstream
   Markdown engine) and by DocConvert — the outputs are structurally
@@ -224,7 +254,7 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   target) with `-D warnings`, full suite — green. Pure logic, no
   Win32 calls.
 
-## Scope limits (v0.8)
+## Scope limits (v0.9)
 
 Markdown: no HTML pass-through; link titles reach the HTML output (and
 come back through html→markdown) but are dropped from the plain-text
@@ -240,8 +270,13 @@ CSV→JSON always uses the first row as headers. `toc` understands ATX
 and setext headings in Markdown and `<h1>`–`<h6>` in HTML — a document
 with no headings yields an empty table of contents, and a source that
 carries no headings (CSV, JSON, text) is `NOT_SUPPORTED`. `normalize`
-covers block structure only: emphasis markers, inline code and line
-wrapping inside a paragraph are preserved. See ROADMAP.md.
+covers block structure and canonical inline markup (`_emphasis_` and
+`__strong__` become the asterisk forms, code spans lose surplus
+backticks and padding); line breaks inside a paragraph are preserved
+because they are editorial. rST and AsciiDoc are subsets — tables and
+layout constructs are out of scope. Streaming applies to identity
+conversions only: everything else needs the whole document to be
+correct. See ROADMAP.md.
 
 ## License
 

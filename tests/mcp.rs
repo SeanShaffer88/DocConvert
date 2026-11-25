@@ -380,6 +380,50 @@ fn toc_and_normalize_tools() {
 }
 
 #[test]
+fn document_syntaxes_and_streaming() {
+    let mut session = Session::start();
+
+    // reStructuredText arrives as a source.
+    let rst = session.call(
+        "convert",
+        &format!(
+            "{{\"input\":\"{}\",\"from\":\"rst\",\"to\":\"html\"}}",
+            json_escape("Guide\n=====\n\n* one\n")
+        ),
+    );
+    assert!(!is_error(&rst), "{rst:?}");
+    assert!(text_of(&rst).contains("<h1>Guide</h1>"), "{rst:?}");
+
+    // Headings become an OPML outline.
+    let opml = session.call(
+        "convert",
+        "{\"input\":\"# A\\n\\n## B\\n\",\"from\":\"markdown\",\"to\":\"opml\"}",
+    );
+    assert!(!is_error(&opml), "{opml:?}");
+    assert!(text_of(&opml).contains("<outline text=\"B\"/>"), "{opml:?}");
+
+    // convert_file can stream an identity copy.
+    let dir = scratch_dir("stream");
+    let source = dir.join("notes.md");
+    let copy = dir.join("copy.md");
+    std::fs::write(&source, "# Title\n\nBody.\n").expect("write source");
+    let result = session.call(
+        "convert_file",
+        &format!(
+            "{{\"input_path\":\"{}\",\"output_path\":\"{}\",\"stream\":true}}",
+            json_escape(&as_str(&source)),
+            json_escape(&as_str(&copy))
+        ),
+    );
+    assert!(!is_error(&result), "{result:?}");
+    assert_eq!(
+        std::fs::read_to_string(&copy).expect("read copy"),
+        "# Title\n\nBody.\n"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn introspection_tools_describe_the_build() {
     let mut session = Session::start();
 

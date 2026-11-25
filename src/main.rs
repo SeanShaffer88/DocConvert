@@ -38,8 +38,9 @@ CONVERT FLAGS
       --front-matter <m>  strip (default) or table
       --heading-ids       id="slug" anchors on md->html headings
       --options <json>    options object, e.g. {"front_matter":"table"}
+      --stream        copy identity conversions in chunks (files only)
   Flags also take --flag=value. Aliases: md, mkd, htm, xhtml, tsv, tab,
-  txt, plain.
+  txt, plain, rst, rest, adoc, asciidoc, opml.
 
 EXAMPLES
   docconvert convert -f md -t html README.md README.html
@@ -48,6 +49,8 @@ EXAMPLES
   docconvert convert -f md -t html --heading-ids --options '{"heading_ids":true}' post.md
   docconvert toc --format html README.md
   docconvert normalize notes.md
+  docconvert convert -f rst -t html notes.rst notes.html
+  docconvert convert -f md -t opml README.md outline.opml
   docconvert capabilities
 
 EXIT CODES
@@ -260,6 +263,7 @@ fn cmd_frontmatter(args: &[String]) -> CResult<()> {
 #[derive(Debug, Default)]
 struct ConvertArgs {
     heading_ids: bool,
+    stream: bool,
     input: Option<String>,
     output: Option<String>,
     from: Option<String>,
@@ -301,6 +305,22 @@ fn cmd_convert(raw_args: &[String]) -> CResult<()> {
     }
     if args.heading_ids {
         options.heading_ids = true;
+    }
+    if args.stream {
+        // Streaming is a file-to-file path: identity conversions are
+        // copied in chunks, everything else parses as usual.
+        return match (args.input.as_deref(), args.output.as_deref()) {
+            (Some(from_path), Some(to_path)) if from_path != "-" && to_path != "-" => {
+                convert::convert_file_streaming(
+                    from_path,
+                    to_path,
+                    Some(from.as_str()),
+                    Some(to.as_str()),
+                )
+                .map(|_| ())
+            }
+            _ => Err(invalid("--stream needs an input and an output path")),
+        };
     }
     let input = match args.input.as_deref() {
         Some(path) if path != "-" => read_file(path)?,
@@ -359,6 +379,8 @@ fn parse_convert_args(args: &[String]) -> CResult<ConvertArgs> {
             }
         } else if flag == "--heading-ids" {
             parsed.heading_ids = true;
+        } else if flag == "--stream" {
+            parsed.stream = true;
         } else if flag.starts_with('-') && flag != "-" {
             return Err(invalid(format!(
                 "unknown option '{flag}' (try 'docconvert help')"
