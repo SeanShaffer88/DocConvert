@@ -422,15 +422,41 @@ pub fn normalize_with(input: &str, style: Style) -> CResult<String> {
 }
 
 fn render_markdown_blocks(blocks: &[Block], refs: &Refs, notes: &Notes, style: Style) -> String {
-    let parts: Vec<String> = blocks
-        .iter()
-        .map(|block| {
-            render_markdown_block(block, refs, notes, style)
-                .trim_end()
-                .to_string()
-        })
-        .filter(|text| !text.is_empty())
-        .collect();
+    let mut parts: Vec<String> = Vec::with_capacity(blocks.len());
+    let mut index = 0usize;
+    while index < blocks.len() {
+        // Two lists of the same kind in a row *are* one list: read back, a
+        // blank line between two `-` items does not start a new one. Writing
+        // them as two made normalize unstable (`" - \n\n* "` came back as
+        // `"- \n-\n"`), so they are merged here.
+        if let Block::List(ordered, items) = &blocks[index] {
+            let mut merged = items.clone();
+            let mut next = index + 1;
+            while let Some(Block::List(other_ordered, other_items)) = blocks.get(next) {
+                if other_ordered != ordered {
+                    break;
+                }
+                merged.extend(other_items.iter().cloned());
+                next += 1;
+            }
+            if next > index + 1 {
+                let text =
+                    render_markdown_block(&Block::List(*ordered, merged), refs, notes, style);
+                let text = text.trim_end();
+                if !text.is_empty() {
+                    parts.push(text.to_string());
+                }
+                index = next;
+                continue;
+            }
+        }
+        let text = render_markdown_block(&blocks[index], refs, notes, style);
+        let text = text.trim_end();
+        if !text.is_empty() {
+            parts.push(text.to_string());
+        }
+        index += 1;
+    }
     parts.join("\n\n")
 }
 
@@ -1979,6 +2005,17 @@ mod tests {
             let once = normalize(text).unwrap();
             assert_eq!(once, normalize(&once).unwrap(), "{text:?} → {once:?}");
         }
+    }
+
+    /// Adjacent lists of one kind are a single list once written down, so
+    /// normalize writes them that way (`tests/fuzz.rs`, seed 1 round 1440).
+    #[test]
+    fn adjacent_lists_become_one_list() {
+        let once = normalize(" - \n\n* ").expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"), "{once:?}");
+        assert_eq!(normalize("- a\n\n- b\n").unwrap(), "- a\n- b\n");
+        // Ordered and unordered stay apart: they really are two lists.
+        assert_eq!(normalize("- a\n\n1. b\n").unwrap(), "- a\n\n1. b\n");
     }
 
     /// A setext heading written over two lines becomes one ATX line, and
