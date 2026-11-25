@@ -46,8 +46,8 @@ const TOOL_NAMES: &[&str] = &[
 ];
 
 const INSTRUCTIONS: &str =
-    "DocConvert converts documents between markdown, html, csv, tsv, json and \
-text. Use `convert` for text you already hold and `convert_file` for paths on disk; pairs outside \
+    "DocConvert converts documents between markdown, html, csv, tsv, json, text, rst, \
+asciidoc and opml. Use `convert` for text you already hold and `convert_file` for paths on disk \
 `matrix` are not supported and fail loudly rather than degrading. `front_matter` reads YAML \
 metadata, `toc` builds a table of contents from a document's headings (anchors match the ids \
 `heading_ids` writes into Markdown->HTML output), `normalize` rewrites Markdown canonically, and \
@@ -58,14 +58,15 @@ metadata, `toc` builds a table of contents from a document's headings (anchors m
 const TOOLS: &str = r#"[
   {
     "name": "convert",
-    "description": "Convert a document between Markdown, HTML, CSV, TSV, JSON and plain text and return the result. Unsupported pairs fail with a clear message instead of guessing.",
+    "description": "Convert a document between Markdown, HTML, CSV, TSV, JSON, plain text, reStructuredText, AsciiDoc and OPML and return the result. Unsupported pairs fail with a clear message instead of guessing.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "input": { "type": "string", "description": "The document text to convert." },
-        "from": { "type": "string", "description": "Source format: markdown, html, csv, tsv, json or text (aliases md, mkd, htm, xhtml, tab, txt, plain accepted)." },
-        "to": { "type": "string", "description": "Target format: markdown, html, csv, tsv, json or text." },
-        "front_matter": { "type": "string", "enum": ["strip", "table"], "description": "What md->html and md->text do with a YAML front matter block: strip it (default) or render it as a key/value table." }
+        "from": { "type": "string", "description": "Source format: markdown, html, csv, tsv, json, text, rst, asciidoc or opml (aliases md, mkd, htm, xhtml, tab, txt, plain, rest, adoc accepted)." },
+        "to": { "type": "string", "description": "Target format: markdown, html, csv, tsv, json, text, rst, asciidoc or opml." },
+        "front_matter": { "type": "string", "enum": ["strip", "table"], "description": "What md->html and md->text do with a YAML front matter block: strip it (default) or render it as a key/value table." },
+        "heading_ids": { "type": "boolean", "description": "Give markdown->html headings GitHub-style id=\"slug\" anchors (default false)." }
       },
       "required": ["input", "from", "to"],
       "additionalProperties": false
@@ -81,7 +82,9 @@ const TOOLS: &str = r#"[
         "output_path": { "type": "string", "description": "Path of the file to write." },
         "from": { "type": "string", "description": "Source format; inferred from input_path when omitted." },
         "to": { "type": "string", "description": "Target format; inferred from output_path when omitted." },
-        "front_matter": { "type": "string", "enum": ["strip", "table"] }
+        "front_matter": { "type": "string", "enum": ["strip", "table"] },
+        "heading_ids": { "type": "boolean" },
+        "stream": { "type": "boolean", "description": "Copy identity conversions in 64 KiB chunks instead of holding the document twice (default false)." }
       },
       "required": ["input_path", "output_path"],
       "additionalProperties": false
@@ -101,13 +104,13 @@ const TOOLS: &str = r#"[
   },
   {
     "name": "toc",
-    "description": "Table of contents for a Markdown or HTML document: the headings as nested links, as Markdown, HTML or JSON. Anchors match the ids `heading_ids` writes into Markdown->HTML output.",
+    "description": "Table of contents for a Markdown, HTML, reStructuredText or AsciiDoc document: the headings as nested links, as Markdown, HTML or JSON. Anchors match the ids `heading_ids` writes into Markdown->HTML output.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "input": { "type": "string", "description": "Document text to read headings from." },
         "path": { "type": "string", "description": "File to read headings from (instead of \"input\")." },
-        "from": { "type": "string", "enum": ["markdown", "html"], "description": "Document format; inferred from the path extension when omitted, else markdown." },
+        "from": { "type": "string", "enum": ["markdown", "html", "rst", "asciidoc"], "description": "Document format; inferred from the path extension when omitted, else markdown." },
         "format": { "type": "string", "enum": ["markdown", "html", "json"], "description": "How to render the table of contents (default markdown)." }
       },
       "additionalProperties": false
@@ -348,6 +351,17 @@ fn tool_convert_file(arguments: &Json) -> CResult<String> {
         ))?,
     };
     let options = options_from(arguments)?;
+    if matches!(field(arguments, "stream"), Some(Json::Bool(true))) {
+        let bytes =
+            convert::convert_file_streaming(&input_path, &output_path, Some(&from), Some(&to))?;
+        return Ok(object(vec![
+            ("written", string(&output_path)),
+            ("bytes", Json::Num(bytes.to_string())),
+            ("from", string(&from)),
+            ("to", string(&to)),
+        ])
+        .to_compact());
+    }
     let text = String::from_utf8(platform::read_file(&input_path)?).map_err(|_| {
         (
             ERR_CORRUPT,

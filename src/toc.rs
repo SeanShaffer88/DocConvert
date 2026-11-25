@@ -1,6 +1,10 @@
 //! Tables of contents: the headings of a Markdown or HTML document as
 //! nested links, rendered as Markdown, HTML or JSON.
 //!
+//! Sources are Markdown, HTML, reStructuredText, AsciiDoc and OPML —
+//! the last three are read as Markdown first, so their anchors match the
+//! ids a conversion writes.
+//!
 //! The anchors come from `markdown::slugify` (and its per-document
 //! dedupe), the same function that gives Markdown→HTML headings their
 //! `id="…"` when `{"heading_ids":true}` is set — so a generated TOC
@@ -19,23 +23,14 @@ pub struct Entry {
     pub anchor: String,
 }
 
-/// Read the headings of `input`, which must be Markdown or HTML.
+/// Read the headings of `input` — Markdown, HTML, reStructuredText or
+/// AsciiDoc.
 pub fn entries(input: &str, from: &str) -> CResult<Vec<Entry>> {
     let from = normalize_format(from)?;
     let mut slugs = Slugs::default();
-    match from.as_str() {
-        "markdown" => Ok(markdown::headings(input)?
-            .into_iter()
-            .map(|(level, text)| {
-                let anchor = slugs.next(&text);
-                Entry {
-                    level,
-                    text,
-                    anchor,
-                }
-            })
-            .collect()),
-        "html" => Ok(html::headings(input)?
+    if from == "html" {
+        // HTML keeps the ids the document already carries.
+        return Ok(html::headings(input)?
             .into_iter()
             .map(|(level, text, id)| {
                 let anchor = match id {
@@ -48,12 +43,32 @@ pub fn entries(input: &str, from: &str) -> CResult<Vec<Entry>> {
                     anchor,
                 }
             })
-            .collect()),
-        other => Err((
-            ERR_NOT_SUPPORTED,
-            format!("toc: a {other} document has no headings to collect"),
-        )),
+            .collect());
     }
+    // Everything else is read as Markdown first, exactly as it is for
+    // conversion, so the anchors stay consistent with the output.
+    let body = match from.as_str() {
+        "markdown" => input.to_string(),
+        "rst" => crate::rst::to_markdown(input)?,
+        "asciidoc" => crate::asciidoc::to_markdown(input)?,
+        other => {
+            return Err((
+                ERR_NOT_SUPPORTED,
+                format!("toc: a {other} document has no headings to collect"),
+            ))
+        }
+    };
+    Ok(markdown::headings(&body)?
+        .into_iter()
+        .map(|(level, text)| {
+            let anchor = slugs.next(&text);
+            Entry {
+                level,
+                text,
+                anchor,
+            }
+        })
+        .collect())
 }
 
 /// `entries` plus a rendering: `markdown`, `html` or `json`.
@@ -212,6 +227,23 @@ mod tests {
         assert_eq!(entries[1].anchor, "custom");
         assert_eq!(entries[2].anchor, "third");
         assert_eq!(entries[2].level, 3);
+    }
+
+    #[test]
+    fn rst_and_asciidoc_headings() {
+        let rst = "Guide\n=====\n\nInstall\n-------\n";
+        let entries = super::entries(rst, "rst").unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].anchor, "guide");
+        assert_eq!(entries[1].anchor, "install");
+
+        let adoc = "= Guide\n\n== Install\n";
+        let entries = super::entries(adoc, "adoc").unwrap();
+        assert_eq!(entries[1].level, 2);
+        assert_eq!(
+            render_markdown(&entries),
+            "- [Guide](#guide)\n  - [Install](#install)\n"
+        );
     }
 
     #[test]

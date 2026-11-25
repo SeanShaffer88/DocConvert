@@ -4,6 +4,45 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.9.0] — 2026-11-25
+
+### Added
+
+- **reStructuredText (subset) as a source format**: sections by
+  adornment order (underlined and overlined), bullet and enumerated
+  lists with indentation nesting, literal blocks after `::`, block
+  quotes, transitions, comments and directives (dropped with their
+  bodies), field lists, and inline literals, emphasis, strong and
+  backtick links with roles. `rst → markdown|html|text`.
+- **AsciiDoc (subset) as a source format**: `= Title` sections,
+  `*`/`**` and `.`/`..` lists, `----`/`....` blocks with an optional
+  `[source,lang]`, example and quote blocks, comments, attribute and
+  block-attribute lines (dropped), admonitions, `'''` breaks,
+  description lists, inline macros. `asciidoc → markdown|html|text`.
+- **OPML both ways**: `opml → markdown|html|text` reads an outline as
+  nested bullets (`_note` becomes the item's text, existing ids are
+  kept), and `markdown → opml` / `html → opml` write a document's
+  headings as an escaped `<outline>` tree.
+- Both readers land as Markdown and are then rendered by the Markdown
+  renderers, so their Markdown, HTML and text outputs cannot drift
+  apart; `toc` reads them too, with the same anchors.
+- **Streaming file API**: `dc_convert_file_streaming`, the MCP
+  `convert_file` `stream` flag and the CLI `--stream` copy an identity
+  conversion (markdown, html, text, rst, asciidoc, opml — byte-faithful
+  by definition) in 64 KiB chunks; every other pair converts through the
+  whole-buffer path, because those conversions need the whole document.
+- **Inline normalization** in `normalize`: `_emphasis_`/`__strong__`
+  become the asterisk forms and code spans lose surplus backticks and
+  padding. Line breaks inside a paragraph stay as written.
+
+### Changed
+
+- The matrix is **37 pairs**: the eleven new ones are the readers and
+  the OPML writer above. Formats are `markdown, html, csv, tsv, json,
+  text, rst, asciidoc, opml`; extensions `.rst`, `.rest`, `.adoc`,
+  `.asciidoc` and `.opml` are detected.
+- Version 0.9.0 across the crate, header, and release.
+
 ## [0.8.0] — 2026-11-25
 
 ### Added

@@ -46,6 +46,13 @@ int main(int argc, char **argv)
     /* A table of contents uses the same anchors as heading ids. */
     print_or_report(dc_toc_json("# Guide\n\n## Install\n\n## Run\n", "markdown"));
 
+    /* Document syntaxes arrive as sources: rst becomes Markdown, then
+     * the Markdown renderers finish the job. */
+    print_or_report(dc_convert("Guide\n=====\n\n* one\n* two\n", "rst", "html"));
+
+    /* A document's headings are its outline. */
+    print_or_report(dc_convert("# Guide\n\n## Install\n", "markdown", "opml"));
+
     /* An unsupported pair is an error, never a lossy guess. */
     char *unsupported = dc_convert(md, "markdown", "csv");
     if (unsupported == NULL) {

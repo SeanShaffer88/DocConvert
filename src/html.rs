@@ -8,7 +8,7 @@
 use crate::{corrupt, CResult};
 
 #[derive(Debug, Clone)]
-enum Node {
+pub(crate) enum Node {
     Text(String),
     Elem {
         name: String,
@@ -21,7 +21,7 @@ const VOID: &[&str] = &[
     "br", "hr", "img", "meta", "link", "input", "col", "wbr", "source",
 ];
 
-fn parse_html(input: &str) -> CResult<Vec<Node>> {
+pub(crate) fn parse_html(input: &str) -> CResult<Vec<Node>> {
     type OpenElem = (String, Vec<(String, String)>, Vec<Node>);
     let bytes: Vec<char> = input.chars().collect();
     let mut root: Vec<Node> = Vec::new();

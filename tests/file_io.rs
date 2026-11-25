@@ -5,7 +5,8 @@ use std::ffi::{CStr, CString};
 use std::path::PathBuf;
 
 use docconvert::ffi::{
-    dc_convert_file, dc_convert_file_opts, dc_last_error, dc_last_error_code, dc_version,
+    dc_convert_file, dc_convert_file_opts, dc_convert_file_streaming, dc_last_error,
+    dc_last_error_code, dc_version,
 };
 use docconvert::{DC_OK, ERR_INVALID_ARG, ERR_NOT_FOUND, ERR_NOT_SUPPORTED};
 
@@ -134,4 +135,47 @@ fn options_and_errors() {
     );
     assert_eq!(code, DC_OK);
     assert!(std::fs::read_to_string(&weird).unwrap().contains("Body"));
+}
+
+#[test]
+fn streaming_copies_identity_conversions_and_converts_the_rest() {
+    let dir = scratch_dir("stream");
+    let source = dir.join("notes.md");
+    let copy = dir.join("copy.md");
+    let html = dir.join("notes.html");
+    let body = "# Title\n\nSome **bold** text.\n".repeat(200);
+    std::fs::write(&source, &body).expect("write source");
+
+    // markdown -> markdown is byte-faithful, so it streams.
+    let written = dc_convert_file_streaming(
+        path(&source).as_ptr(),
+        path(&copy).as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+    );
+    assert_eq!(written, body.len() as i64);
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), body);
+
+    // Anything else converts through the whole-buffer path.
+    let written = dc_convert_file_streaming(
+        path(&source).as_ptr(),
+        path(&html).as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+    );
+    let out = std::fs::read_to_string(&html).unwrap();
+    assert_eq!(written, out.len() as i64);
+    assert!(out.starts_with("<h1>Title</h1>"), "{out}");
+
+    // A missing input is the usual error code, not a crash.
+    let missing = dir.join("nope.md");
+    let code = dc_convert_file_streaming(
+        path(&missing).as_ptr(),
+        path(&copy).as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+    );
+    assert_eq!(code, -1);
+    assert_eq!(dc_last_error_code(), ERR_NOT_FOUND);
+    let _ = std::fs::remove_dir_all(&dir);
 }

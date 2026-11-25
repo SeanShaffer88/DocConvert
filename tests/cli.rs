@@ -253,6 +253,66 @@ fn heading_ids_are_opt_in() {
 }
 
 #[test]
+fn document_syntaxes_and_streaming_on_the_command_line() {
+    // reStructuredText and AsciiDoc are sources; their headings are
+    // ordinary Markdown headings afterwards.
+    let rst = "Guide\n=====\n\nInstall\n-------\n\n* one\n* two\n";
+    let html = run(&["convert", "-f", "rst", "-t", "html"], Some(rst));
+    assert!(html.status.success(), "{}", err(&html));
+    assert!(out(&html).contains("<h1>Guide</h1>"), "{}", out(&html));
+    assert!(out(&html).contains("<li>one</li>"), "{}", out(&html));
+
+    let adoc = "= Guide\n\n== Install\n";
+    let toc = run(&["toc", "--from", "adoc"], Some(adoc));
+    assert!(toc.status.success(), "{}", err(&toc));
+    assert_eq!(
+        out(&toc).trim_end(),
+        "- [Guide](#guide)\n  - [Install](#install)"
+    );
+
+    // Headings become an OPML outline, and an outline becomes bullets.
+    let opml = run(
+        &["convert", "-f", "md", "-t", "opml"],
+        Some("# A\n\n## B\n"),
+    );
+    assert!(opml.status.success(), "{}", err(&opml));
+    let outline = out(&opml);
+    assert!(outline.contains("<opml version=\"2.0\">"), "{outline}");
+    let back = run(
+        &["convert", "-f", "opml", "-t", "md"],
+        Some(outline.as_str()),
+    );
+    assert_eq!(out(&back).trim_end(), "- A\n  - B");
+
+    // --stream needs two paths; identity conversions are copied.
+    let dir = scratch_dir("stream");
+    let source = dir.join("notes.md");
+    let copy = dir.join("copy.md");
+    let body = "# Title\n\nBody text.\n";
+    std::fs::write(&source, body).expect("write source");
+    let streamed = run(
+        &[
+            "convert",
+            "--stream",
+            "-f",
+            "md",
+            "-t",
+            "md",
+            as_str(&source),
+            as_str(&copy),
+        ],
+        None,
+    );
+    assert!(streamed.status.success(), "{}", err(&streamed));
+    assert_eq!(std::fs::read_to_string(&copy).expect("read copy"), body);
+    assert_eq!(out(&streamed), "");
+
+    let no_paths = run(&["convert", "--stream", "-f", "md", "-t", "md"], Some(body));
+    assert_eq!(no_paths.status.code(), Some(1), "{}", err(&no_paths));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn converts_files_and_stays_quiet() {
     let dir = scratch_dir("files");
     let md = dir.join("notes.md");

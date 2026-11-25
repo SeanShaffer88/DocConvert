@@ -266,19 +266,23 @@ fn render_markdown_blocks(blocks: &[Block], refs: &Refs, notes: &Notes) -> Strin
 
 fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes) -> String {
     match block {
-        Block::Heading(level, text) => format!("{} {}", "#".repeat(*level), text.trim()),
-        Block::Paragraph(text) => text
-            .lines()
-            .enumerate()
-            .map(|(index, line)| {
-                if index == 0 {
-                    line.trim_start()
-                } else {
-                    line.trim_end()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
+        Block::Heading(level, text) => {
+            normalize_inline(&format!("{} {}", "#".repeat(*level), text.trim()))
+        }
+        Block::Paragraph(text) => normalize_inline(
+            &text
+                .lines()
+                .enumerate()
+                .map(|(index, line)| {
+                    if index == 0 {
+                        line.trim_start()
+                    } else {
+                        line.trim_end()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
         Block::Code(info, body) => {
             format!("```{}\n{}\n```", info.trim(), body.trim_end_matches('\n'))
         }
@@ -341,6 +345,84 @@ fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes) -> String {
             out
         }
     }
+}
+
+/// Canonical inline markup: `_emphasis_` and `__strong__` become the
+/// asterisk forms GitHub also writes, and code spans lose their padding
+/// and any surplus backticks. Line breaks inside a paragraph are left
+/// alone — they are editorial, not structural.
+fn normalize_inline(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '`' {
+            let mut run = 0usize;
+            while i + run < chars.len() && chars[i + run] == '`' {
+                run += 1;
+            }
+            if let Some(close) = find_run(&chars, i + run, run) {
+                let inner: String = chars[i + run..close].iter().collect();
+                let trimmed = inner.trim();
+                if !trimmed.is_empty() {
+                    let pad = trimmed.starts_with('`') || trimmed.ends_with('`');
+                    out.push('`');
+                    if pad {
+                        out.push(' ');
+                    }
+                    out.push_str(trimmed);
+                    if pad {
+                        out.push(' ');
+                    }
+                    out.push('`');
+                    i = close + run;
+                    continue;
+                }
+            }
+        }
+        if c == '_' {
+            let mut run = 0usize;
+            while i + run < chars.len() && chars[i + run] == '_' {
+                run += 1;
+            }
+            let opens = i == 0 || !chars[i - 1].is_alphanumeric();
+            let starts_word = chars
+                .get(i + run)
+                .is_some_and(|next| !next.is_whitespace() && *next != '_');
+            if opens && starts_word && run <= 2 {
+                if let Some(close) = find_run(&chars, i + run, run) {
+                    let ends_word = close > i + run && !chars[close - 1].is_whitespace();
+                    if ends_word {
+                        let inner: String = chars[i + run..close].iter().collect();
+                        out.push_str(&"*".repeat(run));
+                        out.push_str(&inner);
+                        out.push_str(&"*".repeat(run));
+                        i = close + run;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// The next run of `run` identical `needle` characters at or after
+/// `from`, not part of a longer run.
+fn find_run(chars: &[char], from: usize, run: usize) -> Option<usize> {
+    let needle = if from > 0 { chars[from - 1] } else { '`' };
+    let mut i = from;
+    while i + run <= chars.len() {
+        let matches = chars[i..i + run].iter().all(|&c| c == needle);
+        if matches && chars.get(i + run) != Some(&needle) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
 
 fn joined_cells(cells: &[String]) -> String {

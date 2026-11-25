@@ -7,7 +7,9 @@ use crate::json::{parse_json, Json};
 use crate::markdown::{convert_markdown, convert_markdown_with, markdown_rows, Flavor};
 use crate::{corrupt, CResult, ERR_INVALID_ARG, ERR_NOT_SUPPORTED};
 
-pub const FORMATS: &[&str] = &["markdown", "html", "csv", "tsv", "json", "text"];
+pub const FORMATS: &[&str] = &[
+    "markdown", "html", "csv", "tsv", "json", "text", "rst", "asciidoc", "opml",
+];
 
 /// Every `{from, to}` pair this version supports. `dc_matrix_json()`
 /// is generated from this table and `matrix_is_exact` asserts that
@@ -40,6 +42,19 @@ pub const MATRIX: &[(&str, &str)] = &[
     ("json", "text"),
     ("json", "html"),
     ("json", "markdown"),
+    // Documents with their own syntax arrive as a source: the three
+    // readers land as Markdown and the Markdown renderers do the rest.
+    ("rst", "markdown"),
+    ("rst", "html"),
+    ("rst", "text"),
+    ("asciidoc", "markdown"),
+    ("asciidoc", "html"),
+    ("asciidoc", "text"),
+    ("opml", "markdown"),
+    ("opml", "html"),
+    ("opml", "text"),
+    ("markdown", "opml"),
+    ("html", "opml"),
 ];
 
 /// The `dc_formats_json()` payload — shared by the ABI and the CLI so
@@ -163,10 +178,16 @@ pub fn normalize_format(name: &str) -> CResult<String> {
         "tsv" | "tab" => "tsv",
         "json" => "json",
         "text" | "txt" | "plain" => "text",
+        "rst" | "rest" | "restructuredtext" => "rst",
+        "asciidoc" | "adoc" | "ascii" => "asciidoc",
+        "opml" => "opml",
         other => {
             return Err((
                 ERR_INVALID_ARG,
-                format!("unknown format '{other}' (known: markdown, html, csv, tsv, json, text)"),
+                format!(
+                    "unknown format '{other}' (known: markdown, html, csv, tsv, json, text, \
+                     rst, asciidoc, opml)"
+                ),
             ))
         }
     };
@@ -240,6 +261,37 @@ pub fn convert_with_options(
             "```json\n{}\n```\n",
             parse_json(input)?.to_pretty()
         )),
+        // The readers: rst and AsciiDoc become Markdown, then the Markdown
+        // renderers finish the job, so every target agrees with the others.
+        ("rst", "markdown") => crate::rst::to_markdown(input),
+        ("rst", "html") => convert_markdown_with(
+            &crate::rst::to_markdown(input)?,
+            Flavor::Html,
+            options.heading_ids,
+        ),
+        ("rst", "text") => convert_markdown(&crate::rst::to_markdown(input)?, Flavor::Text),
+        ("asciidoc", "markdown") => crate::asciidoc::to_markdown(input),
+        ("asciidoc", "html") => convert_markdown_with(
+            &crate::asciidoc::to_markdown(input)?,
+            Flavor::Html,
+            options.heading_ids,
+        ),
+        ("asciidoc", "text") => {
+            convert_markdown(&crate::asciidoc::to_markdown(input)?, Flavor::Text)
+        }
+        ("opml", "markdown") => crate::opml::to_markdown(input),
+        ("opml", "html") => convert_markdown_with(
+            &crate::opml::to_markdown(input)?,
+            Flavor::Html,
+            options.heading_ids,
+        ),
+        ("opml", "text") => convert_markdown(&crate::opml::to_markdown(input)?, Flavor::Text),
+        // Outlines out: a document's headings are the outline.
+        ("markdown", "opml") => Ok(crate::opml::from_headings(
+            &crate::markdown::headings(&markdown_body(input, options))?,
+            None,
+        )),
+        ("html", "opml") => Ok(crate::opml::from_headings(&heading_pairs(input)?, None)),
         ("markdown", "json") | ("text", "csv") | ("text", "json") => Err((
             ERR_NOT_SUPPORTED,
             format!("conversion {from} → {to} is not supported"),
@@ -249,6 +301,50 @@ pub fn convert_with_options(
             format!("conversion {from} → {to} is not supported"),
         )),
     }
+}
+
+/// The identity conversions whose output is the input byte for byte —
+/// the ones a streaming copy can serve without parsing anything.
+const BYTE_FAITHFUL: &[&str] = &["markdown", "html", "text", "rst", "asciidoc", "opml"];
+
+/// `dc_convert_file_streaming`: convert a file without holding it twice
+/// when the pair is an identity conversion (those are byte-faithful), and
+/// fall back to the whole-buffer path for everything else — those
+/// conversions need the whole document to be correct. Returns the bytes
+/// written.
+pub fn convert_file_streaming(
+    in_path: &str,
+    out_path: &str,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> CResult<u64> {
+    let from = match from {
+        Some(name) => normalize_format(name)?,
+        None => format_for_path(in_path).ok_or((
+            ERR_INVALID_ARG,
+            format!("cannot detect the input format from '{in_path}' — pass it explicitly"),
+        ))?,
+    };
+    let to = match to {
+        Some(name) => normalize_format(name)?,
+        None => format_for_path(out_path).ok_or((
+            ERR_INVALID_ARG,
+            format!("cannot detect the output format from '{out_path}' — pass it explicitly"),
+        ))?,
+    };
+    if from == to && BYTE_FAITHFUL.contains(&from.as_str()) {
+        return crate::platform::copy_file(in_path, out_path);
+    }
+    let bytes = crate::platform::read_file(in_path)?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        (
+            crate::ERR_CORRUPT,
+            format!("'{in_path}' is not valid UTF-8 text"),
+        )
+    })?;
+    let converted = convert_with_options(&text, &from, &to, &Options::default())?;
+    crate::platform::write_file(out_path, converted.as_bytes())?;
+    Ok(converted.len() as u64)
 }
 
 /// Strip the YAML front matter, or render it as a table when the
@@ -261,6 +357,14 @@ fn markdown_body(input: &str, options: &Options) -> String {
         }
         _ => body.to_string(),
     }
+}
+
+/// A page's headings as (level, text) — the outline in `html → opml`.
+fn heading_pairs(input: &str) -> CResult<Vec<(usize, String)>> {
+    Ok(crate::html::headings(input)?
+        .into_iter()
+        .map(|(level, text, _id)| (level, text))
+        .collect())
 }
 
 fn text_to_html(input: &str) -> String {
@@ -467,6 +571,12 @@ mod tests {
             "csv" => "name,qty\nMilk,2\n",
             "tsv" => "name\tqty\nMilk\t2\n",
             "json" => "{\"a\": [1, 2], \"b\": null}",
+            "rst" => "Title\n=====\n\nPart\n----\n\n* one\n* two\n",
+            "asciidoc" => "= Title\n\n== Part\n\n* one\n* two\n",
+            "opml" => {
+                "<?xml version=\"1.0\"?><opml version=\"2.0\"><body>\
+                 <outline text=\"One\"><outline text=\"Two\"/></outline></body></opml>"
+            }
             _ => "plain text\n\nsecond paragraph\n",
         }
     }
@@ -514,6 +624,46 @@ mod tests {
             convert("<p>nothing</p>", "html", "csv").unwrap_err().0,
             crate::ERR_CORRUPT
         );
+    }
+
+    /// The readers and the outline: a document syntax becomes Markdown,
+    /// then the Markdown renderers finish; headings become OPML.
+    #[test]
+    fn document_syntaxes_and_outlines() {
+        let rst = "Guide\n=====\n\n* one\n* two\n";
+        let html = convert(rst, "rst", "html").unwrap();
+        assert!(html.contains("<h1>Guide</h1>"), "{html}");
+        assert!(html.contains("<li>one</li>"), "{html}");
+        let md = convert(rst, "rst", "markdown").unwrap();
+        assert_eq!(md, "# Guide\n\n- one\n- two\n");
+        let text = convert(rst, "rst", "text").unwrap();
+        assert!(text.contains("Guide"), "{text}");
+
+        let adoc = "= Guide\n\n== Install\n\n* one\n";
+        let html = convert(adoc, "adoc", "html").unwrap();
+        assert!(html.contains("<h2>Install</h2>"), "{html}");
+
+        // Headings are the outline.
+        let opml = convert("# Guide\n\n## Install\n\n### Windows\n", "markdown", "opml").unwrap();
+        assert!(opml.contains("<opml version=\"2.0\">"), "{opml}");
+        assert!(opml.contains("<outline text=\"Guide\">"), "{opml}");
+        assert!(opml.contains("<outline text=\"Windows\"/>"), "{opml}");
+
+        let back = convert(&opml, "opml", "markdown").unwrap();
+        assert_eq!(back, "- Guide\n  - Install\n    - Windows\n");
+        let html = convert(&opml, "opml", "html").unwrap();
+        assert!(html.contains("<ul>") && html.contains("Guide"), "{html}");
+
+        // A page's headings are an outline too.
+        let from_html = convert("<h1>A</h1><h2>B</h2>", "html", "opml").unwrap();
+        assert!(from_html.contains("<outline text=\"B\"/>"), "{from_html}");
+
+        // Aliases and extensions line up.
+        assert_eq!(normalize_format("rest").unwrap(), "rst");
+        assert_eq!(normalize_format("adoc").unwrap(), "asciidoc");
+        assert_eq!(format_for_path("doc.rst").as_deref(), Some("rst"));
+        assert_eq!(format_for_path("notes.adoc").as_deref(), Some("asciidoc"));
+        assert_eq!(format_for_path("feeds.opml").as_deref(), Some("opml"));
     }
 
     /// TSV is first-class: wherever CSV is a source or target, TSV is
