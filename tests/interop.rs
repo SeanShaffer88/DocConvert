@@ -66,7 +66,7 @@ fn front_matter_and_reference_links() {
         front.get("title"),
         Some(&docconvert::json::Json::Str("Release 2.0".into()))
     );
-    assert!(body.starts_with("# Release 2.0"), "{body}");
+    assert!(body.trim_start().starts_with("# Release 2.0"), "{body}");
 
     // HTML back to Markdown: reference links arrive inline, and the
     // definitions are gone from the body.

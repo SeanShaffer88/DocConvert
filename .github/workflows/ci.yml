@@ -51,16 +51,12 @@ jobs:
           $code = $LASTEXITCODE
           Write-Host $out
           if ($code -ne 0) {
-            $lines = $out -split "`n"
-            $emitted = 0
-            for ($i = 0; $i -lt $lines.Length -and $emitted -lt 10; $i++) {
-              if ($lines[$i] -match '^(error|warning)(\[|:)') {
-                $slice = $lines[$i..([Math]::Min($i + 6, $lines.Length - 1))] -join ' | '
-                $slice = $slice.Replace('%', '%25').Replace("`r", ' ').Replace("`n", ' ')
-                if ($slice.Length -gt 900) { $slice = $slice.Substring(0, 900) }
-                Write-Host "::error title=test::$slice"
-                $emitted++
-              }
+            $lines = $out -split "`n" | Where-Object { $_.Trim().Length -gt 0 }
+            $tail = $lines | Select-Object -Last 12
+            foreach ($line in $tail) {
+              $text = $line.Replace('%', '%25').Replace("`r", ' ')
+              if ($text.Length -gt 900) { $text = $text.Substring(0, 900) }
+              Write-Host "::error title=test::$text"
             }
             exit 1
           }
