@@ -238,7 +238,12 @@ fn grid_table(lines: &[&str]) -> Option<(String, usize)> {
                 end += 1;
             }
             let mut piece = String::new();
-            for segment in &segments[start..end] {
+            for (offset, segment) in segments[start..end].iter().enumerate() {
+                // The boundary character is not part of a segment; inside a
+                // span it is a space, so keep one between the pieces.
+                if offset > 0 {
+                    piece.push(' ');
+                }
                 piece.push_str(segment);
             }
             append_cell(&mut text, &mut open, start, &collapse(&piece));
