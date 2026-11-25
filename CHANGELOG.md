@@ -4,6 +4,34 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.3.0] — 2026-11-25
+
+### Added
+
+- **`docconvert` CLI** (`docconvert.exe`), built for scripts and local
+  AI agents: `convert`, `frontmatter`, `formats`, `matrix`,
+  `capabilities`, `version`, `help`.
+  - stdin/stdout piping (`-` or an omitted path), byte-faithful output,
+    silent success;
+  - formats inferred from file extensions, with an explicit
+    `--from`/`--to` requirement when a stream has no extension;
+  - `--front-matter strip|table` and `--options '{json}'`, plus
+    `--flag=value` forms;
+  - exit codes equal to the `DC_*` codes (0–7), errors on stderr as
+    `docconvert: <message>`;
+  - `capabilities` returns formats, pairs, option values, commands and
+    exit-code meanings as one JSON object — one call to plan work.
+- `tests/cli.rs`: the binary driven through pipes, introspection JSON,
+  file conversions and every documented exit code.
+- Release packages now include `docconvert.exe` and the C example.
+
+### Changed
+
+- `convert::formats_json()` and `convert::matrix_json()` are the shared
+  source for the ABI (`dc_formats_json`, `dc_matrix_json`) and the CLI,
+  so all three describe the build identically.
+- Version 0.3.0 across the crate, header, and release.
+
 ## [0.2.0] — 2026-11-25
 
 ### Added

@@ -1,10 +1,10 @@
 [package]
 name = "docconvert"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.80"
 authors = ["Sean Shaffer"]
-description = "Document conversion behind one clean C ABI — Markdown, HTML, CSV, JSON, plain text"
+description = "Document conversion behind one clean C ABI and a scriptable CLI — Markdown, HTML, CSV, JSON, plain text"
 license = "MIT"
 repository = "https://github.com/SeanShaffer88/DocConvert"
 keywords = ["windows", "ffi"]
@@ -13,6 +13,11 @@ categories = ["os::windows-apis", "api-bindings"]
 [lib]
 name = "docconvert"
 crate-type = ["cdylib", "rlib", "staticlib"]
+
+# The command line front end (src/main.rs): same matrix, zero deps.
+[[bin]]
+name = "docconvert"
+path = "src/main.rs"
 
 # Zero dependencies by default. Win32 bindings are hand-declared in
 # src/platform.rs with explicit #[link(name = "...")] on every extern
