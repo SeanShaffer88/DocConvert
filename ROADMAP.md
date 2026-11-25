@@ -1,5 +1,15 @@
 # DocConvert roadmap
 
+## Shipped in v0.6
+
+- **Footnotes** — the last common GFM construct: `[^label]` references
+  and `[^label]: note` definitions, numbered by first reference, with
+  a footnotes section in HTML and a numbered list in the text flavor.
+- **html→json** — the first table as an array of objects, built on the
+  same extraction as html→csv, so the two never disagree.
+- **markdown→csv** — a document that is exactly one table (optionally
+  under a heading) becomes CSV; anything with prose is refused.
+
 ## Shipped in v0.5
 
 - **Link titles** end to end: `"…"`, `'…'` and `(…)` titles on inline
@@ -49,12 +59,11 @@
 
 ## Next
 
-- **Footnotes** (`[^1]`) — the last common GFM construct still
-  missing from the Markdown reader.
-- **HTML→JSON** as a table-array equivalent of html→csv, sharing the
-  same first-table extraction.
-- **`markdown→csv`** when the document is exactly one table (common
-  for README payloads), reusing the table renderer.
+- **TSV** as a first-class format (tab-separated, same quoting
+  rules), promoted from the Later list because it is the cheapest next
+  pair to add.
+- **Footnote back-references in html→markdown**, so the round trip
+  stops dropping `<sup>` blocks.
 
 ## Later
 

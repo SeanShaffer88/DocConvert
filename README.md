@@ -117,10 +117,11 @@ or `""` means defaults. Unknown keys and values are
 The metadata is never lost either way: `dc_front_matter_json` returns
 it as a JSON object regardless of how the document is converted.
 
-## The matrix (v0.3)
+## The matrix (v0.6)
 
-markdown→html, markdown→text, html→markdown, html→text,
-html→csv, text→html, text→markdown, csv→json, json→csv,
+markdown→html, markdown→text, markdown→csv (a document that is one
+table), html→markdown, html→text, html→csv, html→json (both lift the
+first `<table>`), text→html, text→markdown, csv→json, json→csv,
 csv→markdown (table), csv→html (table), csv→text,
 json→text/html/markdown (pretty-printed, fenced for Markdown), plus
 identity conversions that validate and normalize (JSON pretty-prints,
@@ -139,8 +140,11 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   collected document-wide, **link titles** (`"…"`, `'…'`, `(…)`) on
   both inline and reference links and images, **GFM task lists**
   (`- [x] done`), autolinks, blockquotes, nested lists, horizontal
-  rules, GFM pipe tables with alignment. **Raw HTML in Markdown is
-  escaped**, so output is safe to embed by default.
+  rules, GFM pipe tables with alignment, and **footnotes**
+  (`[^1]` + `[^1]: note` definitions, numbered by first reference and
+  collected into a `<section class="footnotes">` block; the text
+  flavor numbers them too). **Raw HTML in Markdown is escaped**, so
+  output is safe to embed by default.
 - **Front matter**: a leading `---` block is parsed as a YAML subset
   (flat keys, nested maps, `- item` lists, inline `[a, b]` lists,
   `|`/`>` block scalars). Numbers and booleans become JSON scalars,
@@ -151,7 +155,8 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   numeric), attributes, void elements; script/style contents are
   dropped. Tables become GFM tables, and **html→csv** lifts the first
   `<table>` out of a page (RFC 4180 quoting, cell text flattened;
-  `colspan`/`rowspan` are not expanded). A page with no table is
+  `colspan`/`rowspan` are not expanded), and **html→json** turns that
+  same table into an array of objects. A page with no table is
   `DC_ERR_CORRUPT`, not an empty file.
 - **CSV**: RFC 4180 quoting in both directions (embedded commas,
   quotes, newlines). CSV→JSON infers numbers/booleans/null — with
@@ -179,11 +184,14 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   target) with `-D warnings`, full suite — green. Pure logic, no
   Win32 calls.
 
-## Scope limits (v0.5)
+## Scope limits (v0.6)
 
-Markdown: no HTML pass-through, no footnotes; link titles reach the
-HTML output (and come back through html→markdown) but are dropped from
-the plain-text flavor, which keeps the label and URL only.
+Markdown: no HTML pass-through; footnotes are one-way (html→markdown
+drops the `<sup>` block); link titles reach the HTML output (and come
+back through html→markdown) but are dropped from the plain-text
+flavor, which keeps the label and URL only. markdown→csv insists on a
+document that is one table (plus at most one heading) — prose is an
+error, not a guess.
 HTML: expects roughly well-formed input (no tag-soup repair
 heuristics); html→csv uses the first table only and ignores spans.
 CSV→JSON always uses the first row as headers. See ROADMAP.md.

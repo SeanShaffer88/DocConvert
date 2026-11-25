@@ -4,7 +4,7 @@ use crate::csv::{parse_csv, write_csv};
 use crate::frontmatter;
 use crate::html::{html_to_csv, html_to_markdown, html_to_text};
 use crate::json::{parse_json, Json};
-use crate::markdown::{convert_markdown, Flavor};
+use crate::markdown::{convert_markdown, markdown_to_csv, Flavor};
 use crate::{corrupt, CResult, ERR_INVALID_ARG, ERR_NOT_SUPPORTED};
 
 pub const FORMATS: &[&str] = &["markdown", "html", "csv", "json", "text"];
@@ -16,9 +16,11 @@ pub const FORMATS: &[&str] = &["markdown", "html", "csv", "json", "text"];
 pub const MATRIX: &[(&str, &str)] = &[
     ("markdown", "html"),
     ("markdown", "text"),
+    ("markdown", "csv"),
     ("html", "markdown"),
     ("html", "text"),
     ("html", "csv"),
+    ("html", "json"),
     ("text", "html"),
     ("text", "markdown"),
     ("csv", "json"),
@@ -181,6 +183,8 @@ pub fn convert_with_options(
         ("html", "markdown") => html_to_markdown(input),
         ("html", "text") => html_to_text(input),
         ("html", "csv") => html_to_csv(input),
+        ("html", "json") => html_to_json(input),
+        ("markdown", "csv") => markdown_to_csv(&markdown_body(input, options)),
         ("text", "html") => Ok(text_to_html(input)),
         ("text", "markdown") => Ok(input.trim_end().to_string() + "\n"),
         ("csv", "json") => csv_to_json(input),
@@ -197,11 +201,7 @@ pub fn convert_with_options(
             "```json\n{}\n```\n",
             parse_json(input)?.to_pretty()
         )),
-        ("html", "json")
-        | ("markdown", "csv")
-        | ("markdown", "json")
-        | ("text", "csv")
-        | ("text", "json") => Err((
+        ("markdown", "json") | ("text", "csv") | ("text", "json") => Err((
             ERR_NOT_SUPPORTED,
             format!("conversion {from} → {to} is not supported"),
         )),
@@ -222,6 +222,14 @@ fn markdown_body(input: &str, options: &Options) -> String {
         }
         _ => body.to_string(),
     }
+}
+
+/// html→json: the first table as an array of objects. It reuses
+/// html→csv's extraction and csv→json's typing, so the siblings agree
+/// cell for cell.
+fn html_to_json(input: &str) -> CResult<String> {
+    let csv = html_to_csv(input)?;
+    csv_to_json(&csv)
 }
 
 fn text_to_html(input: &str) -> String {
@@ -402,7 +410,11 @@ mod tests {
         .unwrap();
         assert!(roundtrip.contains("# T"), "{roundtrip}");
         assert!(roundtrip.contains("Hello **there**."), "{roundtrip}");
-        assert!(convert("x", "markdown", "csv").is_err());
+        // markdown→csv wants a table: prose is a parse-style failure.
+        assert_eq!(
+            convert("x", "markdown", "csv").unwrap_err().0,
+            crate::ERR_CORRUPT
+        );
         assert_eq!(format_for_path("notes.MD").as_deref(), Some("markdown"));
         assert_eq!(format_for_path("noext"), None);
         // Leading-zero codes stay strings.
@@ -412,7 +424,10 @@ mod tests {
 
     fn sample(name: &str) -> &'static str {
         match name {
-            "markdown" => "# Title\n\nHello **there** and [a link](https://e.com).\n",
+            "markdown" => {
+                "# Title\n\nHello **there** and [a link](https://e.com).\n\n\
+                 | A | B |\n|---|---|\n| 1 | 2 |\n"
+            }
             "html" => {
                 "<h1>Title</h1><p>Hello <strong>there</strong></p>\
                        <table><tr><th>A</th></tr><tr><td>1</td></tr></table>"

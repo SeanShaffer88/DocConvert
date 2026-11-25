@@ -43,6 +43,15 @@
   output, silence on success, stderr-only errors, and exit codes equal
   to the `DC_*` codes. `tests/cli.rs` drives the real binary via
   `CARGO_BIN_EXE_docconvert`, including every documented exit code.
+- Footnotes are document-wide: `collect_definitions` strips
+  `[^label]: note` lines (with indented continuations),
+  `collect_notes` numbers them by first reference, and the numbering
+  reaches the inline renderer through `Notes`, which `render_block`
+  and `inline_ctx` thread everywhere. `inline_with_refs` stays the
+  public entry point and passes an empty `Notes`.
+- Both single-table extractors (`html_to_csv`, `html_to_json`) and
+  `markdown_to_csv` refuse documents without exactly one table; never
+  let them guess rows out of prose.
 - Markdown link titles are parsed once, by `split_destination` /
   `parse_title` in `src/markdown.rs`, and rendered as an escaped
   `title="…"`; `md_title` in `src/html.rs` writes them back. Task

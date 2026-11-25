@@ -4,6 +4,33 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.6.0] — 2026-11-25
+
+### Added
+
+- **Markdown footnotes**: `[^label]` references and `[^label]: note`
+  definitions (with indented continuation lines) are collected
+  document-wide and numbered by first reference, as GFM does. HTML
+  gets `<sup><a href="#fn-1" id="fnref-1">1</a></sup>` plus a
+  `<section class="footnotes">` block with back-links; the text flavor
+  numbers them inline and lists them at the end. Undefined notes and
+  references inside fenced code stay literal.
+- **html→json**: the first `<table>` as an array of objects, sharing
+  html→csv's extraction and csv→json's typing (numbers, booleans and
+  nulls, leading-zero codes kept as strings), so the two siblings
+  agree cell for cell.
+- **markdown→csv**: a document that is one GFM table — optionally
+  under a single heading, the README-payload shape — becomes CSV with
+  header row, cells flattened from Markdown to plain text. Prose, no
+  table, two tables, or anything else is `DC_ERR_CORRUPT` rather than
+  a silent guess.
+- The matrix is now 17 pairs; the CLI, MCP server, `dc_matrix_json()`
+  and docs pick the two new ones up from `convert::MATRIX`.
+
+### Changed
+
+- Version 0.6.0 across the crate, header, and release.
+
 ## [0.5.0] — 2026-11-25
 
 ### Added
