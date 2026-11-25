@@ -123,6 +123,12 @@
   (`markdown::has_document_wide_constructs`). Every streamed path has a
   test asserting equality with its whole-document reference — keep it
   that way before adding a pair.
+- The release number is written once, in `Cargo.toml`. `lib.rs` derives
+  `VERSION` with `env!("CARGO_PKG_VERSION")`, `dc_version` does the same,
+  and `tests/file_io.rs::version_is_one_source_of_truth` pins both the
+  numeric `VERSION_*` parts and the banner line in `include/docconvert.h`
+  to it. A bump therefore fails CI until the header agrees — never
+  hardcode a version string again.
 - Gate: WinDevKit tools/gate.sh (fmt + clippy -D warnings BOTH
   targets + FULL tests). This crate's match-heavy code attracts
   collapsible-match lints; prefer guards from the start.

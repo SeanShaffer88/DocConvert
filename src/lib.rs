@@ -25,7 +25,10 @@ pub mod rst;
 pub mod stream;
 pub mod toc;
 
-pub const VERSION: &str = "0.10.0";
+/// The crate version, straight from `Cargo.toml`: the one place a release
+/// number is written. `dc_version` and the CLI both read it, and
+/// `tests/file_io.rs` pins the numeric parts and the shipped header to it.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const VERSION_MAJOR: u32 = 0;
 pub const VERSION_MINOR: u32 = 10;
 pub const VERSION_PATCH: u32 = 0;
