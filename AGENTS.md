@@ -76,11 +76,14 @@
   anywhere else; the TOC must keep pointing at the ids the conversion
   writes.
 - `toc` is a view over headings, not a matrix pair: sources without
-  headings are NOT_SUPPORTED. `convert::MATRIX` is 37 pairs;
+  headings are NOT_SUPPORTED. `convert::MATRIX` is 38 pairs;
   markdown→markdown remains a byte-faithful identity.
 - `markdown::normalize` re-renders blocks canonically and must stay
   idempotent: definitions go last, inline prose is left as written, and
   `render_markdown_block` is the single place block shapes are printed.
+  It settles — `SETTLE_PASSES` re-runs the pass until one changes
+  nothing — because rendering can hand the next parse a different
+  structure. Both sweeps in `tests/fuzz.rs` are the check on that.
 - Byte offsets in the Markdown block parser must go through
   `line_indent` / `tail_from` — slicing a line at a raw byte column
   can panic mid-UTF-8.
@@ -178,6 +181,7 @@
   DLL's memory is the host's, and a stack overflow there is not an
   error the host can catch.
 - `tests/fuzz.rs` is the regression net for the parsers: a seeded
-  generator, a small sweep in CI and a long ignored one. When it finds
-  something, the seed, round and input are in the message — turn that
-  into a named test and keep the sweep as it is.
+  generator, a small sweep in CI and a long ignored one, a watchdog that
+  turns a hang into a failure, and a shrinker that reports the smallest
+  input it can. When it finds something, the seed, round and input are in
+  the message — turn that into a named test and keep the sweep as it is.

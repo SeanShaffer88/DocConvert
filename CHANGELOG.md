@@ -4,6 +4,66 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.12.0] — 2026-11-25
+
+### Added
+
+- **`markdown → json`.** A Markdown document becomes structured JSON —
+  its front matter, headings with the same anchors `toc` writes, its
+  text, list items, code blocks and tables — instead of `NOT_SUPPORTED`.
+  The matrix is 38 pairs, and `matrix_is_exact` covers all of them.
+- **`tools/gate.sh`.** The pre-merge gate the contributor guide lists —
+  format check, clippy, tests, release build — as one script.
+- **A seeded fuzz suite** (`tests/fuzz.rs`). A deterministic generator
+  over the parsers' awkward fragments, a small sweep in CI and a long
+  ignored one; a failure shrinks itself to a short input, and a hang is
+  reported as a failure instead of stalling the run.
+
+### Fixed
+
+- **JSON from text that only looks numeric.** `json::is_json_number` now
+  governs every text→number decision, so `007`, `1.`, `.5` and `+1` stay
+  strings in JSON output instead of being written as numbers no parser
+  will accept back.
+- **Stack overflows on hostile input.** `html` refuses past 256 nested
+  elements and `json` past 128 nested values; the Markdown block parser
+  stops nesting at 48 and keeps the excess as text. A deep document is
+  `DC_ERR_CORRUPT`, not a crash the host cannot catch.
+- **MCP `initialize` took any version string.** A known protocol version
+  is echoed, an unknown date is answered with ours (`2025-06-18`), and a
+  value that is not a date is `-32602`.
+- **`--front-matter` lost to `--options`.** The flag wins either way
+  round, which is what the help text already promised.
+- **`normalize` was not idempotent.** A fence now owns its run length and
+  tilde fences are fences; an empty code block is two lines, not three;
+  the spaces after a list marker are structure, not text; two adjacent
+  lists of one kind are one list; a setext heading is written on one
+  line; and a code span or emphasis is only rewritten when the rewrite
+  cannot change how the backticks pair. `normalize` also settles now: it
+  repeats the pass until one changes nothing, because rendering can hand
+  the next parse a different structure.
+- **A stray `/` in an HTML tag spun forever.** `<a]: https://e.com<tr>`
+  is skipped and the scan moves on, as it does for any other junk in a
+  tag.
+- **A bare `---` alignment row stayed bare.** Writing left alignment as
+  `:---` made the second normalization pass read a different alignment
+  than the first one wrote.
+
+### Changed
+
+- `json::parse_json` no longer copies its input into a `Vec<char>`, and
+  the keyword matcher allocates nothing; depth is tracked on the byte
+  slice the parser is already walking.
+- `tests/` has a `file_io` case for the pair that a streamed conversion
+  still refuses: the stream path and the whole-buffer path must agree on
+  which conversions exist.
+
+### Removed
+
+- The duplicate `release.yml` at the repository root. GitHub only reads
+  `.github/workflows/`, so it was dead weight that could drift from the
+  workflow it copied — as the duplicate `ci.yml` before it.
+
 ## [0.11.0] — 2026-11-25
 
 ### Added

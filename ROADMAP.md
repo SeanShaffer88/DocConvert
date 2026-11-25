@@ -43,7 +43,8 @@
 
 Both readers land as Markdown and are rendered by the Markdown
 renderers, so a document's Markdown, HTML and text never disagree; `toc`
-reads them with the same anchors. The matrix is 37 pairs.
+reads them with the same anchors. The matrix is 38 pairs, the last
+one `markdown → json`.
 
 ## Next
 
