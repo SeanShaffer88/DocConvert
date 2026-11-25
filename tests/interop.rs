@@ -167,3 +167,42 @@ fn tsv_across_the_matrix() {
     let html = docconvert::convert::convert(&md, "markdown", "tsv").unwrap();
     assert_eq!(html, tsv);
 }
+
+/// The streaming path and the whole-document path write the same bytes for
+/// every table pair — the streaming gate redoes the file when it cannot, so
+/// a difference here means the gate chose wrong, not just a slower path.
+#[test]
+fn table_pairs_stream_byte_identically() {
+    let dir = std::env::temp_dir().join(format!("docconvert-pairs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let cases: &[(&str, &str, &str)] = &[
+        ("name,qty\nMilk,2\nBread,3\n", "csv", "markdown"),
+        ("name\tqty\nMilk\t2\n", "tsv", "markdown"),
+        (
+            "| name | qty |\n| --- | --- |\n| Milk | 2 |\n",
+            "markdown",
+            "csv",
+        ),
+        (
+            "| name | qty |\n| --- | --- |\n| Milk | 2 |\n",
+            "markdown",
+            "tsv",
+        ),
+    ];
+    for (index, (source, from, to)) in cases.iter().enumerate() {
+        let input = dir.join(format!("case-{index}.{from}"));
+        let output = dir.join(format!("case-{index}.out"));
+        std::fs::write(&input, source).expect("write input");
+        docconvert::convert::convert_file_streaming(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            Some(from),
+            Some(to),
+        )
+        .unwrap_or_else(|error| panic!("{from} → {to} streamed: {error:?}"));
+        let streamed = std::fs::read_to_string(&output).expect("read output");
+        let whole = docconvert::convert::convert(source, from, to).expect("whole document");
+        assert_eq!(streamed, whole, "{from} → {to} differs when streamed");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
