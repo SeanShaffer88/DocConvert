@@ -1,5 +1,14 @@
 # DocConvert roadmap
 
+## Shipped in v0.5
+
+- **Link titles** end to end: `"…"`, `'…'` and `(…)` titles on inline
+  links, images and reference definitions reach the HTML as
+  `title="…"` (escaped), and html→markdown writes them back out.
+- **GFM task lists**: `- [ ]` / `- [x]` become checkboxes in HTML and
+  stay readable in the text flavor; html→markdown turns a leading
+  checkbox back into a task item, so documents round-trip.
+
 ## Shipped in v0.4
 
 - **MCP server** (`docconvert-mcp.exe`): the same conversions as Model
@@ -40,10 +49,8 @@
 
 ## Next
 
-- **Link titles** emitted on the Markdown→HTML path (`<a title=…>`),
-  parsed today and dropped.
-- **Task lists** (`- [x]`) and footnotes — the two remaining common
-  GFM constructs.
+- **Footnotes** (`[^1]`) — the last common GFM construct still
+  missing from the Markdown reader.
 - **HTML→JSON** as a table-array equivalent of html→csv, sharing the
   same first-table extraction.
 - **`markdown→csv`** when the document is exactly one table (common

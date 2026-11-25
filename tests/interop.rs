@@ -40,11 +40,13 @@ fn front_matter_and_reference_links() {
     assert!(html.starts_with("<h1>Release 2.0</h1>"), "{html}");
     assert!(!html.contains("title:"), "front matter leaked: {html}");
     assert!(
-        html.contains("<a href=\"https://github.com/SeanShaffer88/DocConvert/issues\">tracker</a>"),
+        html.contains("<a href=\"https://github.com/SeanShaffer88/DocConvert/issues\" title=\"Issue tracker\">tracker</a>"),
         "{html}"
     );
     assert!(
-        html.contains("<a href=\"https://example.com/changelog\">changelog</a>"),
+        html.contains(
+            "<a href=\"https://example.com/changelog\" title=\"Changelog\">changelog</a>"
+        ),
         "{html}"
     );
     assert!(html.contains("<td>Front matter</td>"), "{html}");
@@ -72,7 +74,11 @@ fn front_matter_and_reference_links() {
     // definitions are gone from the body.
     let back = docconvert::convert::convert(&html, "html", "markdown").unwrap();
     assert!(back.contains("# Release 2.0"), "{back}");
-    assert!(back.contains("](https://example.com/changelog)"), "{back}");
+    // Titles survive the trip back out as `dest "title"`.
+    assert!(
+        back.contains("](https://example.com/changelog \"Changelog\")"),
+        "{back}"
+    );
     assert!(!back.contains("[changelog]:"), "{back}");
 }
 
@@ -102,4 +108,33 @@ fn dump_sample_html() {
         "{}",
         docconvert::convert::convert(SAMPLE, "markdown", "html").unwrap()
     );
+}
+
+/// The GFM additions survive a full loop: titles reach HTML as
+/// `title="…"`, task items become checkboxes, and both come back.
+#[test]
+fn titles_and_task_lists_round_trip() {
+    let md = "See [the docs](https://example.com/docs \"Documentation\").\n\n\
+              - [x] shipped\n- [ ] pending\n";
+    let html = docconvert::convert::convert(md, "markdown", "html").unwrap();
+    assert!(
+        html.contains("<a href=\"https://example.com/docs\" title=\"Documentation\">the docs</a>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<li><input type=\"checkbox\" disabled checked> shipped</li>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<li><input type=\"checkbox\" disabled> pending</li>"),
+        "{html}"
+    );
+
+    let back = docconvert::convert::convert(&html, "html", "markdown").unwrap();
+    assert!(
+        back.contains("[the docs](https://example.com/docs \"Documentation\")"),
+        "{back}"
+    );
+    assert!(back.contains("- [x] shipped"), "{back}");
+    assert!(back.contains("- [ ] pending"), "{back}");
 }
