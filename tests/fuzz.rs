@@ -258,13 +258,15 @@ fn sweep(seed: u64, rounds: usize) {
         // Liveness and stability, in that order: a hang is reported with the
         // input that caused it, before anything tries to shrink it.
         let source = input.clone();
-        let once = match catch_unwind(move || within(&label, move || normalize(&source))) {
+        let first_label = label.clone();
+        let once = match catch_unwind(move || within(&first_label, move || normalize(&source))) {
             Ok(Ok(text)) => text,
             Ok(Err(error)) => panic!("normalize failed on {label}: {error:?}"),
             Err(payload) => panic!("{}", panic_text(payload)),
         };
         let second = once.clone();
-        let twice = match catch_unwind(move || within(&label, move || normalize(&second))) {
+        let second_label = label.clone();
+        let twice = match catch_unwind(move || within(&second_label, move || normalize(&second))) {
             Ok(Ok(text)) => text,
             Ok(Err(error)) => panic!("normalize failed on its own output for {label}: {error:?}"),
             Err(payload) => panic!("{}", panic_text(payload)),
