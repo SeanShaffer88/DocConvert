@@ -1,0 +1,22 @@
+name: ci-debug
+on: workflow_dispatch
+jobs:
+  dbg:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: clippy
+        shell: bash
+        run: |
+          cargo clippy --all-targets -- -D warnings > /tmp/out.txt 2>&1 || true
+          python -c "
+import re
+lines=open('/tmp/out.txt',encoding='utf-8',errors='replace').read().splitlines()
+for i,l in enumerate(lines):
+    if re.match(r'^(warning|error)', l) or l.strip().startswith('-->'):
+        print('::error::'+l.replace('%','%25').replace('\r','').replace('\n','%0A'))
+"
+          tail -3 /tmp/out.txt
