@@ -15,7 +15,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          cargo test --locked --no-fail-fast > t.txt 2>&1
+          cargo test --locked --no-fail-fast -- --include-ignored > t.txt 2>&1
           code=$?
           python tools/report.py t.txt > report.md || true
           gh pr comment 17 --body-file report.md || true

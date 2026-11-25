@@ -574,16 +574,15 @@ fn normalize_inline(text: &str, marker: char) -> String {
             if let Some(close) = find_run(&chars, i + run, run) {
                 let inner: String = chars[i + run..close].iter().collect();
                 let trimmed = inner.trim();
-                if !trimmed.is_empty() {
-                    let pad = trimmed.starts_with('`') || trimmed.ends_with('`');
+                // Only a span that needs no padding is rewritten. When the
+                // text itself starts or ends with a backtick, CommonMark's
+                // padding (`\`\` \` \`\` `) would be read back as a
+                // different run structure on the next pass — normalize would
+                // then not be idempotent, and repeating it would keep
+                // changing the document. Such a span stays byte for byte.
+                if !trimmed.is_empty() && !trimmed.starts_with('`') && !trimmed.ends_with('`') {
                     out.push('`');
-                    if pad {
-                        out.push(' ');
-                    }
                     out.push_str(trimmed);
-                    if pad {
-                        out.push(' ');
-                    }
                     out.push('`');
                     i = close + run;
                     continue;
@@ -1855,6 +1854,35 @@ mod tests {
 
     /// One flag for the pair: presets, and a comma list that reads in
     /// either order.
+    /// The failure that `tests/fuzz.rs` found first (seed 1, round 5): a
+    /// stray backtick run in a paragraph used to gain padding spaces on the
+    /// first pass, and those spaces let the second pass read the run
+    /// differently — normalize changed its own output.
+    #[test]
+    fn code_spans_normalize_to_a_fixed_point() {
+        let input = "<table>&amp;-->{`</script>%|:--|(\u{1f600}b___<table><p>```:::![[}\
+                     <table>| --- |\n<script><p>|||\u{e9}|===<tr></div>[^1]: note![%- [^1]'|:<script>";
+        let once = normalize(input).expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        // Every other shape of backtick run is stable too.
+        for text in [
+            "```",
+            "` ` `",
+            "`` ` ``",
+            "``x`` and `y`",
+            "`a` ``b`` ```c```",
+            "``a`b``",
+            "` `",
+        ] {
+            let once = normalize(text).expect("normalize");
+            assert_eq!(once, normalize(&once).expect("normalize twice"), "{text:?}");
+        }
+        // A span that needs no padding still loses its surplus backticks and
+        // its padding, which is the whole point of the pass.
+        assert_eq!(normalize("`` x ``\n").unwrap(), "`x`\n");
+        assert_eq!(normalize("`  y  `\n").unwrap(), "`y`\n");
+    }
+
     #[test]
     fn deep_block_nesting_stays_text_instead_of_crashing() {
         let quoted = format!("{}deep\n", "> ".repeat(2_000));
