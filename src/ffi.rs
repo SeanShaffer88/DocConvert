@@ -93,7 +93,9 @@ fn finish_code(run: Result<Result<(), (i32, String)>, (i32, String)>) -> c_int {
 
 #[no_mangle]
 pub extern "C" fn dc_version() -> *const c_char {
-    static VERSION_C: &[u8] = b"0.7.0\0";
+    // Derived from the crate version, so `dc_version` cannot drift from
+    // `VERSION_MINOR` / `VERSION_PATCH` again on a version bump.
+    static VERSION_C: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
     VERSION_C.as_ptr() as *const c_char
 }
 
