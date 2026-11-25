@@ -313,6 +313,71 @@ fn document_syntaxes_and_streaming_on_the_command_line() {
 }
 
 #[test]
+fn normalize_styles_and_streamed_blocks() {
+    let doc = "_soft_ and __loud__\n\n```\ncode\n```\n";
+    let plain = run(&["normalize"], Some(doc));
+    assert_eq!(out(&plain), "*soft* and **loud**\n\n```\ncode\n```\n");
+
+    let styled = run(
+        &["normalize", "--emphasis", "underscore", "--fence=tilde"],
+        Some(doc),
+    );
+    assert!(styled.status.success(), "{}", err(&styled));
+    assert_eq!(out(&styled), "_soft_ and __loud__\n\n~~~\ncode\n~~~\n");
+
+    let bad = run(&["normalize", "--fence", "pdf"], Some(doc));
+    assert_eq!(bad.status.code(), Some(1), "{}", err(&bad));
+
+    // Streaming: text and markdown both stream block by block, and the
+    // result is exactly what the whole-document path produces.
+    let dir = scratch_dir("blocks");
+    let text = dir.join("notes.txt");
+    let html = dir.join("notes.html");
+    let markdown = dir.join("notes.md");
+    let html_out = dir.join("notes.out.html");
+    std::fs::write(&text, "one\ntwo\n\nthree\n").expect("write text");
+    let streamed = run(
+        &[
+            "convert",
+            "--stream",
+            "-f",
+            "text",
+            "-t",
+            "html",
+            as_str(&text),
+            as_str(&html_out),
+        ],
+        None,
+    );
+    assert!(streamed.status.success(), "{}", err(&streamed));
+    assert_eq!(
+        std::fs::read_to_string(&html_out).expect("read"),
+        "<p>one<br>\ntwo</p>\n<p>three</p>\n"
+    );
+
+    std::fs::write(&markdown, "# Title\n\nBody\n\n- one\n- two\n").expect("write md");
+    let streamed = run(
+        &[
+            "convert",
+            "--stream",
+            "-f",
+            "md",
+            "-t",
+            "html",
+            as_str(&markdown),
+            as_str(&html),
+        ],
+        None,
+    );
+    assert!(streamed.status.success(), "{}", err(&streamed));
+    assert_eq!(
+        std::fs::read_to_string(&html).expect("read"),
+        "<h1>Title</h1>\n<p>Body</p>\n<ul>\n<li>one</li>\n<li>two</li>\n</ul>"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn converts_files_and_stays_quiet() {
     let dir = scratch_dir("files");
     let md = dir.join("notes.md");

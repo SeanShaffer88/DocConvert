@@ -79,6 +79,14 @@ pub fn to_markdown(input: &str) -> CResult<String> {
             continue;
         }
 
+        // Tables: grid (`+---+`) and simple (`===  ===`) both become GFM.
+        if let Some((md, consumed)) = table(&lines[i..]) {
+            flush(&mut blocks, &mut paragraph);
+            blocks.push(md);
+            i += consumed;
+            continue;
+        }
+
         // A transition is a lone adornment of four or more characters.
         if is_adornment(line) && line.trim().len() >= 4 && indent_of(line) == 0 {
             flush(&mut blocks, &mut paragraph);
@@ -155,6 +163,149 @@ pub fn to_markdown(input: &str) -> CResult<String> {
         out.push('\n');
     }
     Ok(out)
+}
+
+/// A grid or simple table → a GFM table, plus how many lines it used.
+fn table(lines: &[&str]) -> Option<(String, usize)> {
+    let first = lines[0].trim_end();
+    if is_grid_border(first) {
+        return grid_table(lines);
+    }
+    if is_simple_border(first) {
+        return simple_table(lines);
+    }
+    None
+}
+
+fn is_grid_border(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.len() >= 3
+        && trimmed.starts_with('+')
+        && trimmed.ends_with('+')
+        && trimmed.chars().all(|c| matches!(c, '+' | '-' | '='))
+}
+
+fn grid_table(lines: &[&str]) -> Option<(String, usize)> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut header_rows: Option<usize> = None;
+    let mut i = 1usize;
+    while i < lines.len() {
+        let line = lines[i].trim_end();
+        if is_grid_border(line) {
+            if header_rows.is_none() && line.contains('=') {
+                header_rows = Some(rows.len());
+            }
+            i += 1;
+            if i >= lines.len() || !lines[i].trim_start().starts_with('|') {
+                break;
+            }
+            continue;
+        }
+        if !line.trim_start().starts_with('|') {
+            break;
+        }
+        rows.push(split_grid_row(line));
+        i += 1;
+    }
+    if rows.is_empty() {
+        return None;
+    }
+    Some((assemble(rows, header_rows), i))
+}
+
+fn split_grid_row(line: &str) -> Vec<String> {
+    let trimmed = line.trim().trim_matches('|');
+    trimmed
+        .split('|')
+        .map(|cell| cell.trim().to_string())
+        .collect()
+}
+
+/// A run of `=` groups: the column spans of a simple table.
+fn border_spans(line: &str) -> Option<Vec<(usize, usize)>> {
+    let chars: Vec<char> = line.trim_end().chars().collect();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        if chars[index] == '=' {
+            let start = index;
+            while index < chars.len() && chars[index] == '=' {
+                index += 1;
+            }
+            spans.push((start, index));
+        } else {
+            index += 1;
+        }
+    }
+    if spans.len() < 2 {
+        return None;
+    }
+    Some(spans)
+}
+
+fn is_simple_border(line: &str) -> bool {
+    border_spans(line).is_some() && line.trim().chars().all(|c| c == '=' || c == ' ')
+}
+
+fn simple_table(lines: &[&str]) -> Option<(String, usize)> {
+    let spans = border_spans(lines[0])?;
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut header_rows: Option<usize> = None;
+    let mut i = 1usize;
+    while i < lines.len() {
+        let line = lines[i];
+        if line.trim().is_empty() {
+            break;
+        }
+        if is_simple_border(line) {
+            if header_rows.is_none() {
+                header_rows = Some(rows.len());
+                i += 1;
+                continue;
+            }
+            i += 1;
+            break;
+        }
+        rows.push(split_simple_row(line, &spans));
+        i += 1;
+    }
+    if rows.is_empty() {
+        return None;
+    }
+    Some((assemble(rows, header_rows), i))
+}
+
+fn split_simple_row(line: &str, spans: &[(usize, usize)]) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    spans
+        .iter()
+        .map(|&(start, end)| {
+            let from = start.min(chars.len());
+            let to = end.min(chars.len());
+            chars[from..to]
+                .iter()
+                .collect::<String>()
+                .trim()
+                .to_string()
+        })
+        .collect()
+}
+
+/// Header rows are the ones before the table's interior border; a GFM
+/// table takes one header row, so the rest become body rows.
+fn assemble(rows: Vec<Vec<String>>, header_rows: Option<usize>) -> String {
+    let split = match header_rows {
+        Some(count) if count >= 1 && count < rows.len() => count,
+        _ => 1,
+    };
+    let mut ordered: Vec<Vec<String>> = Vec::with_capacity(rows.len());
+    ordered.push(rows[split - 1].clone());
+    for (index, row) in rows.into_iter().enumerate() {
+        if index != split - 1 {
+            ordered.push(row);
+        }
+    }
+    crate::markdown::table(&ordered)
 }
 
 fn flush(blocks: &mut Vec<String>, paragraph: &mut Vec<String>) {
@@ -515,6 +666,27 @@ mod tests {
             html.contains("<a href=\"https://example.com\">text</a>"),
             "{html}"
         );
+    }
+
+    #[test]
+    fn tables_become_markdown_tables() {
+        let simple = "=====  =====\nName   Qty\n=====  =====\nMilk   2\nBread  3\n=====  =====\n";
+        assert_eq!(
+            to_markdown(simple).unwrap(),
+            "| Name | Qty |\n| --- | --- |\n| Milk | 2 |\n| Bread | 3 |\n"
+        );
+
+        let grid = "+------+-----+\n| Name | Qty |\n+======+=====+\n| Milk | 2   |\n\
+                    +------+-----+\n";
+        assert_eq!(
+            to_markdown(grid).unwrap(),
+            "| Name | Qty |\n| --- | --- |\n| Milk | 2 |\n"
+        );
+
+        // And the table renders through the Markdown pipeline.
+        let html = convert_markdown(&to_markdown(simple).unwrap(), Flavor::Html).unwrap();
+        assert!(html.contains("<th>Name</th>"), "{html}");
+        assert!(html.contains("<td>Milk</td>"), "{html}");
     }
 
     #[test]

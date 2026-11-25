@@ -244,8 +244,8 @@ pub fn convert_with_options(
         ("tsv", "json") => Ok(rows_to_json(&parse_tsv(input)?)),
         ("json", "csv") => Ok(write_csv(&json_rows(input)?)),
         ("json", "tsv") => Ok(write_tsv(&json_rows(input)?)),
-        ("csv", "markdown") => Ok(rows_to_markdown_table(&parse_csv(input)?)),
-        ("tsv", "markdown") => Ok(rows_to_markdown_table(&parse_tsv(input)?)),
+        ("csv", "markdown") => Ok(crate::markdown::table(&parse_csv(input)?)),
+        ("tsv", "markdown") => Ok(crate::markdown::table(&parse_tsv(input)?)),
         ("csv", "html") => Ok(rows_to_html_table(&parse_csv(input)?)),
         ("tsv", "html") => Ok(rows_to_html_table(&parse_tsv(input)?)),
         ("csv", "text") => Ok(write_csv(&parse_csv(input)?)),
@@ -305,46 +305,19 @@ pub fn convert_with_options(
 
 /// The identity conversions whose output is the input byte for byte —
 /// the ones a streaming copy can serve without parsing anything.
-const BYTE_FAITHFUL: &[&str] = &["markdown", "html", "text", "rst", "asciidoc", "opml"];
+pub(crate) const BYTE_FAITHFUL: &[&str] = &["markdown", "html", "text", "rst", "asciidoc", "opml"];
 
-/// `dc_convert_file_streaming`: convert a file without holding it twice
-/// when the pair is an identity conversion (those are byte-faithful), and
-/// fall back to the whole-buffer path for everything else — those
-/// conversions need the whole document to be correct. Returns the bytes
-/// written.
+/// `dc_convert_file_streaming`: a file conversion that streams where it
+/// can — identity copies, text paragraphs, CSV/TSV records and Markdown
+/// blocks — and falls back to the whole-document path everywhere else.
+/// Returns the bytes written.
 pub fn convert_file_streaming(
     in_path: &str,
     out_path: &str,
     from: Option<&str>,
     to: Option<&str>,
 ) -> CResult<u64> {
-    let from = match from {
-        Some(name) => normalize_format(name)?,
-        None => format_for_path(in_path).ok_or((
-            ERR_INVALID_ARG,
-            format!("cannot detect the input format from '{in_path}' — pass it explicitly"),
-        ))?,
-    };
-    let to = match to {
-        Some(name) => normalize_format(name)?,
-        None => format_for_path(out_path).ok_or((
-            ERR_INVALID_ARG,
-            format!("cannot detect the output format from '{out_path}' — pass it explicitly"),
-        ))?,
-    };
-    if from == to && BYTE_FAITHFUL.contains(&from.as_str()) {
-        return crate::platform::copy_file(in_path, out_path);
-    }
-    let bytes = crate::platform::read_file(in_path)?;
-    let text = String::from_utf8(bytes).map_err(|_| {
-        (
-            crate::ERR_CORRUPT,
-            format!("'{in_path}' is not valid UTF-8 text"),
-        )
-    })?;
-    let converted = convert_with_options(&text, &from, &to, &Options::default())?;
-    crate::platform::write_file(out_path, converted.as_bytes())?;
-    Ok(converted.len() as u64)
+    crate::stream::convert_file(in_path, out_path, from, to)
 }
 
 /// Strip the YAML front matter, or render it as a table when the
@@ -478,27 +451,6 @@ fn json_rows(input: &str) -> CResult<Vec<Vec<String>>> {
         }
     }
     Ok(rows)
-}
-
-fn rows_to_markdown_table(rows: &[Vec<String>]) -> String {
-    if rows.is_empty() {
-        return String::new();
-    }
-    let mut out = String::new();
-    for (i, row) in rows.iter().enumerate() {
-        let cells: Vec<String> = row.iter().map(|c| c.replace('|', "\\|")).collect();
-        out.push_str("| ");
-        out.push_str(&cells.join(" | "));
-        out.push_str(" |\n");
-        if i == 0 {
-            out.push('|');
-            for _ in &cells {
-                out.push_str(" --- |");
-            }
-            out.push('\n');
-        }
-    }
-    out
 }
 
 fn rows_to_html_table(rows: &[Vec<String>]) -> String {
@@ -664,6 +616,22 @@ mod tests {
         assert_eq!(format_for_path("doc.rst").as_deref(), Some("rst"));
         assert_eq!(format_for_path("notes.adoc").as_deref(), Some("asciidoc"));
         assert_eq!(format_for_path("feeds.opml").as_deref(), Some("opml"));
+    }
+
+    /// Tables carry through the readers: rST simple/grid and AsciiDoc
+    /// `|===` tables become GFM tables, so rst → html shows them too.
+    #[test]
+    fn reader_tables_reach_every_target() {
+        let rst = "=====  =====\nName   Qty\n=====  =====\nMilk   2\n=====  =====\n";
+        let md = convert(rst, "rst", "markdown").unwrap();
+        assert_eq!(md, "| Name | Qty |\n| --- | --- |\n| Milk | 2 |\n");
+        let html = convert(rst, "rst", "html").unwrap();
+        assert!(html.contains("<th>Name</th>"), "{html}");
+        assert!(html.contains("<td>Milk</td>"), "{html}");
+
+        let adoc = "|===\n| Name | Qty\n| Milk | 2\n|===\n";
+        let html = convert(adoc, "adoc", "html").unwrap();
+        assert!(html.contains("<th>Qty</th>"), "{html}");
     }
 
     /// TSV is first-class: wherever CSV is a source or target, TSV is

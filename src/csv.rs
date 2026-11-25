@@ -116,12 +116,18 @@ pub fn write_tsv(rows: &[Vec<String>]) -> String {
 
 fn write_delimited(rows: &[Vec<String>], delim: char) -> String {
     let mut out = String::new();
-    let separator = delim.to_string();
     for row in rows {
-        let cells: Vec<String> = row.iter().map(|c| quote_cell(c, delim)).collect();
-        out.push_str(&cells.join(&separator));
-        out.push_str("\r\n");
+        out.push_str(&write_record(row, delim));
     }
+    out
+}
+
+/// One record, with the same quoting `write_csv`/`write_tsv` use — the
+/// building block a streamed record writer needs.
+pub fn write_record(row: &[String], delim: char) -> String {
+    let cells: Vec<String> = row.iter().map(|c| quote_cell(c, delim)).collect();
+    let mut out = cells.join(&delim.to_string());
+    out.push_str("\r\n");
     out
 }
 

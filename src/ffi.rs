@@ -256,6 +256,21 @@ fn convert_file_impl(
     }))
 }
 
+/// `dc_normalize(input, options_json)` — canonical Markdown. The options
+/// object is optional and accepts `{"emphasis":"asterisk|underscore"}`
+/// and `{"fence":"backtick|tilde"}`; unknown keys are INVALID_ARG.
+#[no_mangle]
+pub extern "C" fn dc_normalize(input: *const c_char, options_json: *const c_char) -> *mut c_char {
+    finish_str(guard(|| {
+        let input = req_str(input, "input")?;
+        let style = match opt_str(options_json)? {
+            Some(text) if !text.trim().is_empty() => crate::markdown::Style::from_json(&text)?,
+            _ => crate::markdown::Style::default(),
+        };
+        crate::markdown::normalize_with(&input, style)
+    }))
+}
+
 /// `dc_convert_file_streaming(in, out, from, to)` — converts a file and
 /// returns the bytes written, streaming the identity conversions
 /// (markdown, html, text, rst, asciidoc, opml copy byte for byte) in
@@ -353,6 +368,22 @@ mod tests {
             s.contains("\"markdown\",\"to\":\"html\"") || s.contains("\"from\":\"markdown\""),
             "{s}"
         );
+    }
+
+    #[test]
+    fn ffi_normalize_applies_the_style() {
+        let plain = dc_normalize(cs("_soft_\n").as_ptr(), std::ptr::null());
+        assert_eq!(take(plain), "*soft*\n");
+
+        let styled = dc_normalize(
+            cs("_soft_\n\n```\ncode\n```\n").as_ptr(),
+            cs("{\"emphasis\":\"underscore\",\"fence\":\"tilde\"}").as_ptr(),
+        );
+        assert_eq!(take(styled), "_soft_\n\n~~~\ncode\n~~~\n");
+
+        let bad = dc_normalize(cs("x").as_ptr(), cs("{\"fence\":1}").as_ptr());
+        assert!(bad.is_null());
+        assert_eq!(dc_last_error_code(), crate::ERR_INVALID_ARG);
     }
 
     #[test]
