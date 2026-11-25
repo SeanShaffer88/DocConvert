@@ -13,20 +13,17 @@ jobs:
         shell: bash
         run: |
           emit () {
-            local label="$1"; shift
+            label="$1"
+            shift
             if "$@" > out.txt 2>&1; then
               echo "ok: $label"
             else
               echo "FAILED: $label"
-              python - <<'PY'
-import io
-text = io.open('out.txt', encoding='utf-8', errors='replace').read()
-tail = text.strip().splitlines()[-45:]
-payload = "%0A".join(l.replace('%', '%25').replace('\r', '') for l in tail)
-print("::error::" + payload)
-PY
+              body=$(tail -n 40 out.txt | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%s", (NR>1 ? "%0A" : ""), $0}')
+              echo "::error::$label: $body"
             fi
           }
+          rustc --version
           emit fmt cargo fmt --all -- --check
           emit clippy cargo clippy --all-targets -- -D warnings
           emit test cargo test --locked
