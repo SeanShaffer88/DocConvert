@@ -1,4 +1,4 @@
-/* DocConvert.dll v0.2.0 — document conversion behind one clean C ABI:
+/* DocConvert.dll v0.3.0 — document conversion behind one clean C ABI:
  * Markdown, HTML, CSV, JSON, and plain text. All strings UTF-8,
  * NUL-terminated. char* results are caller-owned: free with
  * dc_free_string(). Format names: "markdown"/"md", "html",
@@ -12,6 +12,10 @@
  *     drop it, or render it as a key/value table.
  * Unknown keys or values fail with DC_ERR_INVALID_ARG rather than
  * being ignored.
+ *
+ * A command line front end with the same matrix ships alongside as
+ * docconvert.exe ("docconvert capabilities" reports formats, pairs,
+ * options and exit codes as one JSON object).
  */
 #ifndef DOCCONVERT_H
 #define DOCCONVERT_H

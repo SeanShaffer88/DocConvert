@@ -4,6 +4,42 @@ Document conversion between **Markdown, HTML, CSV, JSON, and plain
 text** behind one clean C ABI — pure Rust, zero dependencies, every
 parser hand-written. Library #16 in the Windows DLL Collection.
 
+## Command line (`docconvert.exe`)
+
+The same matrix, script-friendly: byte-faithful pipes, silent success,
+and exit codes that *are* the `DC_*` codes — `$?` tells you exactly
+what happened.
+
+```console
+$ docconvert convert -f md -t html README.md README.html
+$ cat notes.md | docconvert convert -f md -t text
+$ docconvert convert --from=md --to=html --front-matter=table post.md
+$ docconvert frontmatter post.md
+{"title":"Release 2.0","draft":false}
+```
+
+`capabilities` is the one call a local AI (or a script) needs before
+converting anything: formats, supported pairs, option values, commands,
+and the meaning of every exit code, all in one JSON object. `formats`
+and `matrix` return those pieces alone.
+
+| Command | Purpose |
+|---|---|
+| `convert [flags] [IN] [OUT]` | Convert; omitted or `-` paths mean stdin/stdout. |
+| `frontmatter [IN]` | YAML front matter as JSON (`{}` when absent). |
+| `formats`, `matrix`, `capabilities` | JSON introspection. |
+| `version`, `help` | Version string, usage. |
+
+Flags: `-f/--from`, `-t/--to`, `-i/--input`, `-o/--output`,
+`--front-matter strip|table`, `--options '{...}'`; `--flag=value` is
+accepted too. Formats fall back to the file extensions, and stdin or
+stdout without an inferable format is an argument error rather than a
+guess.
+
+Exit codes: `0` ok, `1` invalid argument, `2` conversion not supported,
+`3` file not found, `4` access denied, `5` platform error, `6` internal
+error, `7` input failed to parse.
+
 ## ABI (`include/docconvert.h`, prefix `dc_`)
 
 | Function | Purpose |
@@ -48,7 +84,7 @@ or `""` means defaults. Unknown keys and values are
 The metadata is never lost either way: `dc_front_matter_json` returns
 it as a JSON object regardless of how the document is converted.
 
-## The matrix (v0.2)
+## The matrix (v0.3)
 
 markdown→html, markdown→text, html→markdown, html→text,
 html→csv, text→html, text→markdown, csv→json, json→csv,
@@ -94,8 +130,10 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
 
 - Unit suites per module (front matter, Markdown incl. reference
   links, HTML incl. html→csv, CSV, JSON, matrix, FFI) plus
-  integration tests: fixture cross-checks in `tests/interop.rs` and
-  the file API with its error codes in `tests/file_io.rs`.
+  integration tests: fixture cross-checks in `tests/interop.rs`, the
+  file API with its error codes in `tests/file_io.rs`, and the CLI
+  driven end to end through pipes, introspection JSON and exit codes
+  in `tests/cli.rs`.
 - **External cross-check**: the sample document in
   `tests/fixtures/sample.md` was rendered by **marked** (a mainstream
   Markdown engine) and by DocConvert — the outputs are structurally
@@ -105,7 +143,7 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   target) with `-D warnings`, full suite — green. Pure logic, no
   Win32 calls.
 
-## Scope limits (v0.2)
+## Scope limits (v0.3)
 
 Markdown: no HTML pass-through, no footnotes/task lists; link titles
 are parsed but not emitted (Markdown→HTML keeps `href` only).

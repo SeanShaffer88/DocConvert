@@ -27,6 +27,14 @@
   (skipping fenced code) and normalized with `normalize_label`
   (trim + collapse whitespace + lowercase). Labels are looked up at
   inline-render time, so `Refs` is threaded through every renderer.
+- The CLI lives in `src/main.rs` and must stay dependency-free: the
+  hand-rolled parser there is the whole of it. It is what local AI
+  agents use, so keep it boring and machine-friendly: JSON
+  introspection (`convert::formats_json` / `matrix_json` are the shared
+  builders — never duplicate the lists in the CLI), byte-faithful
+  output, silence on success, stderr-only errors, and exit codes equal
+  to the `DC_*` codes. `tests/cli.rs` drives the real binary via
+  `CARGO_BIN_EXE_docconvert`, including every documented exit code.
 - Byte offsets in the Markdown block parser must go through
   `line_indent` / `tail_from` — slicing a line at a raw byte column
   can panic mid-UTF-8.

@@ -31,6 +31,22 @@ pub const MATRIX: &[(&str, &str)] = &[
     ("json", "markdown"),
 ];
 
+/// The `dc_formats_json()` payload — shared by the ABI and the CLI so
+/// both describe the build identically.
+pub fn formats_json() -> String {
+    let items: Vec<String> = FORMATS.iter().map(|f| format!("\"{f}\"")).collect();
+    format!("[{}]", items.join(","))
+}
+
+/// The `dc_matrix_json()` payload, generated from [`MATRIX`].
+pub fn matrix_json() -> String {
+    let items: Vec<String> = MATRIX
+        .iter()
+        .map(|(from, to)| format!("{{\"from\":\"{from}\",\"to\":\"{to}\"}}"))
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
 /// What md→html and md→text do with a YAML front matter block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FrontMatterMode {

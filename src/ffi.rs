@@ -93,7 +93,7 @@ fn finish_code(run: Result<Result<(), (i32, String)>, (i32, String)>) -> c_int {
 
 #[no_mangle]
 pub extern "C" fn dc_version() -> *const c_char {
-    static VERSION_C: &[u8] = b"0.2.0\0";
+    static VERSION_C: &[u8] = b"0.3.0\0";
     VERSION_C.as_ptr() as *const c_char
 }
 
@@ -137,16 +137,7 @@ pub extern "C" fn dc_free_string(p: *mut c_char) {
 /// JSON list of the supported formats.
 #[no_mangle]
 pub extern "C" fn dc_formats_json() -> *mut c_char {
-    finish_str(guard(|| {
-        Ok(format!(
-            "[{}]",
-            convert::FORMATS
-                .iter()
-                .map(|f| format!("\"{f}\""))
-                .collect::<Vec<_>>()
-                .join(",")
-        ))
-    }))
+    finish_str(guard(|| Ok(convert::formats_json())))
 }
 
 fn convert_impl(
@@ -263,17 +254,11 @@ fn convert_file_impl(
     }))
 }
 
-/// JSON list of the `{from,to}` pairs this build supports — the same
-/// table `convert` dispatches from.
+/// JSON list of the `{from,to}` pairs this build supports — generated
+/// from `convert::MATRIX`, the same table `convert` dispatches from.
 #[no_mangle]
 pub extern "C" fn dc_matrix_json() -> *mut c_char {
-    finish_str(guard(|| {
-        let items: Vec<String> = convert::MATRIX
-            .iter()
-            .map(|(from, to)| format!("{{\"from\":\"{from}\",\"to\":\"{to}\"}}"))
-            .collect();
-        Ok(format!("[{}]", items.join(",")))
-    }))
+    finish_str(guard(|| Ok(convert::matrix_json())))
 }
 
 /// The YAML front matter of a Markdown document as a JSON object
