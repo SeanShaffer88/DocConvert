@@ -1,11 +1,11 @@
-//! HTML → Markdown and HTML → plain text.
+//! HTML → Markdown, HTML → plain text, and HTML → CSV.
 //!
 //! A small forgiving DOM parser (elements, attributes, text, entity
-//! decoding; script/style contents dropped) plus two renderers.
+//! decoding; script/style contents dropped) plus the renderers.
 //! Input is expected to be roughly well-formed HTML — the element
 //! set of the Markdown renderer above and common hand-written pages.
 
-use crate::CResult;
+use crate::{corrupt, CResult};
 
 #[derive(Debug, Clone)]
 enum Node {
@@ -525,6 +525,73 @@ fn raw_text(nodes: &[Node]) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// CSV writer
+// ---------------------------------------------------------------------------
+
+/// The first `<table>` in the document becomes CSV: one row per
+/// `<tr>`, one cell per `<th>`/`<td>`, cell text flattened to a
+/// single line and quoted per RFC 4180. `colspan`/`rowspan` are not
+/// expanded — a spanned cell occupies its own column. Documents
+/// without a table are `DC_ERR_CORRUPT`, never an empty file.
+pub fn html_to_csv(input: &str) -> CResult<String> {
+    let nodes = parse_html(input)?;
+    let rows = match first_table(&nodes) {
+        Some(table) => table_rows(table),
+        None => Vec::new(),
+    };
+    if rows.iter().all(|row| row.is_empty()) {
+        return Err(corrupt("html→csv: no <table> with rows found"));
+    }
+    Ok(crate::csv::write_csv(&rows))
+}
+
+fn first_table(nodes: &[Node]) -> Option<&[Node]> {
+    for node in nodes {
+        if let Node::Elem { name, children, .. } = node {
+            if name == "table" {
+                return Some(children);
+            }
+            if let Some(found) = first_table(children) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn table_rows(nodes: &[Node]) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for node in nodes {
+        if let Node::Elem { name, children, .. } = node {
+            match name.as_str() {
+                "tr" => {
+                    let mut cells: Vec<String> = Vec::new();
+                    for cell in children {
+                        if let Node::Elem {
+                            name: cell_name,
+                            children: cell_children,
+                            ..
+                        } = cell
+                        {
+                            if cell_name == "td" || cell_name == "th" {
+                                cells
+                                    .push(collapse_ws(&raw_text(cell_children)).trim().to_string());
+                            }
+                        }
+                    }
+                    if !cells.is_empty() {
+                        rows.push(cells);
+                    }
+                }
+                "thead" | "tbody" | "tfoot" => rows.extend(table_rows(children)),
+                _ => {}
+            }
+        }
+    }
+    rows
+}
+
+// ---------------------------------------------------------------------------
 // Plain-text renderer
 // ---------------------------------------------------------------------------
 
@@ -696,6 +763,26 @@ mod tests {
         assert!(text.contains("Fish & Chips — tasty"), "{text}");
         assert!(!text.contains("var x"), "{text}");
         assert!(text.contains("Second"), "{text}");
+    }
+
+    #[test]
+    fn table_to_csv() {
+        let csv = html_to_csv(
+            "<html><body><table><thead><tr><th>Name</th><th>Note</th></tr></thead>\
+             <tbody><tr><td>Smith, John</td><td>said \"hi\"</td></tr></tbody></table></body></html>",
+        )
+        .unwrap();
+        assert_eq!(csv, "Name,Note\r\n\"Smith, John\",\"said \"\"hi\"\"\"\r\n");
+        // The first table wins when a page has several.
+        let csv =
+            html_to_csv("<table><tr><td>1</td></tr></table><table><tr><td>2</td></tr></table>")
+                .unwrap();
+        assert_eq!(csv, "1\r\n");
+        // No table: corrupt, not an empty file.
+        assert_eq!(
+            html_to_csv("<p>no tables here</p>").unwrap_err().0,
+            crate::ERR_CORRUPT
+        );
     }
 
     #[test]

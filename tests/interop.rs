@@ -4,6 +4,7 @@
 //! without the external tool in CI.
 
 const SAMPLE: &str = include_str!("fixtures/sample.md");
+const RELEASE_NOTES: &str = include_str!("fixtures/release-notes.md");
 
 #[test]
 fn sample_document_structure() {
@@ -28,6 +29,65 @@ fn sample_document_structure() {
     let back = docconvert::convert::convert(&html, "html", "markdown").unwrap();
     assert!(back.contains("# Shopping List"), "{back}");
     assert!(back.contains("**buy**"), "{back}");
+}
+
+/// A document with YAML front matter and reference-style links: the
+/// metadata is stripped by default but recoverable, the reference
+/// links resolve, and the table survives the HTML round trip.
+#[test]
+fn front_matter_and_reference_links() {
+    let html = docconvert::convert::convert(RELEASE_NOTES, "markdown", "html").unwrap();
+    assert!(html.starts_with("<h1>Release 2.0</h1>"), "{html}");
+    assert!(!html.contains("title:"), "front matter leaked: {html}");
+    assert!(
+        html.contains("<a href=\"https://github.com/SeanShaffer88/DocConvert/issues\">tracker</a>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<a href=\"https://example.com/changelog\">changelog</a>"),
+        "{html}"
+    );
+    assert!(html.contains("<td>Front matter</td>"), "{html}");
+
+    // Opted in, the metadata is rendered instead of dropped.
+    let options = docconvert::convert::Options::from_json("{\"front_matter\":\"table\"}").unwrap();
+    let kept =
+        docconvert::convert::convert_with_options(RELEASE_NOTES, "markdown", "html", &options)
+            .unwrap();
+    assert!(kept.contains("<td>title</td>"), "{kept}");
+    assert!(kept.contains("<td>Release 2.0</td>"), "{kept}");
+    // Nested values (the author list) survive as compact JSON.
+    assert!(kept.contains("Ada"), "{kept}");
+
+    // Either way the ABI can hand the metadata over as JSON.
+    let (front, body) = docconvert::frontmatter::split(RELEASE_NOTES);
+    let front = front.expect("front matter");
+    assert_eq!(
+        front.get("title"),
+        Some(&docconvert::json::Json::Str("Release 2.0".into()))
+    );
+    assert!(body.trim_start().starts_with("# Release 2.0"), "{body}");
+
+    // HTML back to Markdown: reference links arrive inline, and the
+    // definitions are gone from the body.
+    let back = docconvert::convert::convert(&html, "html", "markdown").unwrap();
+    assert!(back.contains("# Release 2.0"), "{back}");
+    assert!(back.contains("](https://example.com/changelog)"), "{back}");
+    assert!(!back.contains("[changelog]:"), "{back}");
+}
+
+/// HTML with a payload table converts to CSV through the same matrix
+/// as everything else.
+#[test]
+fn html_table_to_csv() {
+    let html = docconvert::convert::convert(RELEASE_NOTES, "markdown", "html").unwrap();
+    let csv = docconvert::convert::convert(&html, "html", "csv").unwrap();
+    assert!(
+        csv.starts_with("Change,Status\r\n"),
+        "csv should start with the table header: {csv}"
+    );
+    assert!(csv.contains("Reference links,done"), "{csv}");
+    assert_eq!(csv.lines().count(), 4, "{csv}");
 }
 
 /// Print our HTML for visual diffing against a reference renderer

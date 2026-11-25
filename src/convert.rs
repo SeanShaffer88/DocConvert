@@ -1,12 +1,103 @@
 //! Format registry + the conversion matrix.
 
 use crate::csv::{parse_csv, write_csv};
-use crate::html::{html_to_markdown, html_to_text};
+use crate::frontmatter;
+use crate::html::{html_to_csv, html_to_markdown, html_to_text};
 use crate::json::{parse_json, Json};
 use crate::markdown::{convert_markdown, Flavor};
 use crate::{corrupt, CResult, ERR_INVALID_ARG, ERR_NOT_SUPPORTED};
 
 pub const FORMATS: &[&str] = &["markdown", "html", "csv", "json", "text"];
+
+/// Every `{from, to}` pair this version supports. `dc_matrix_json()`
+/// is generated from this table and `matrix_is_exact` asserts that
+/// `convert` agrees with it, so the advertised matrix and the dispatch
+/// can never drift apart.
+pub const MATRIX: &[(&str, &str)] = &[
+    ("markdown", "html"),
+    ("markdown", "text"),
+    ("html", "markdown"),
+    ("html", "text"),
+    ("html", "csv"),
+    ("text", "html"),
+    ("text", "markdown"),
+    ("csv", "json"),
+    ("json", "csv"),
+    ("csv", "markdown"),
+    ("csv", "html"),
+    ("csv", "text"),
+    ("json", "text"),
+    ("json", "html"),
+    ("json", "markdown"),
+];
+
+/// What md→html and md→text do with a YAML front matter block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrontMatterMode {
+    /// Drop it from the rendered document (the default). The metadata
+    /// is still reachable with `dc_front_matter_json`.
+    #[default]
+    Strip,
+    /// Render it as a two-column table so nothing is lost.
+    Table,
+}
+
+/// Conversion options; `Options::default()` is the documented
+/// behaviour of every pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Options {
+    pub front_matter: FrontMatterMode,
+}
+
+impl Options {
+    /// Parse the ABI's options object, e.g. `{"front_matter":"table"}`.
+    /// Unknown keys and values are INVALID_ARG — options are never
+    /// ignored silently.
+    pub fn from_json(text: &str) -> CResult<Options> {
+        let mut options = Options::default();
+        if text.trim().is_empty() {
+            return Ok(options);
+        }
+        let entries = match parse_json(text)? {
+            Json::Object(entries) => entries,
+            _ => return Err((ERR_INVALID_ARG, "options must be a JSON object".to_string())),
+        };
+        for (key, value) in entries {
+            match key.as_str() {
+                "front_matter" => {
+                    let mode = match value {
+                        Json::Str(mode) => mode,
+                        _ => {
+                            return Err((
+                                ERR_INVALID_ARG,
+                                "options.front_matter must be a string".to_string(),
+                            ))
+                        }
+                    };
+                    options.front_matter = match mode.trim().to_lowercase().as_str() {
+                        "strip" | "none" => FrontMatterMode::Strip,
+                        "table" | "keep" => FrontMatterMode::Table,
+                        other => {
+                            return Err((
+                                ERR_INVALID_ARG,
+                                format!(
+                                "unknown front_matter mode '{other}' (expected 'strip' or 'table')"
+                            ),
+                            ))
+                        }
+                    };
+                }
+                other => {
+                    return Err((
+                        ERR_INVALID_ARG,
+                        format!("unknown conversion option '{other}'"),
+                    ))
+                }
+            }
+        }
+        Ok(options)
+    }
+}
 
 pub fn normalize_format(name: &str) -> CResult<String> {
     let f = match name.trim().to_lowercase().as_str() {
@@ -35,6 +126,15 @@ pub fn format_for_path(path: &str) -> Option<String> {
 }
 
 pub fn convert(input: &str, from: &str, to: &str) -> CResult<String> {
+    convert_with_options(input, from, to, &Options::default())
+}
+
+pub fn convert_with_options(
+    input: &str,
+    from: &str,
+    to: &str,
+    options: &Options,
+) -> CResult<String> {
     let from = normalize_format(from)?;
     let to = normalize_format(to)?;
     if from == to {
@@ -46,10 +146,11 @@ pub fn convert(input: &str, from: &str, to: &str) -> CResult<String> {
         };
     }
     match (from.as_str(), to.as_str()) {
-        ("markdown", "html") => convert_markdown(input, Flavor::Html),
-        ("markdown", "text") => convert_markdown(input, Flavor::Text),
+        ("markdown", "html") => convert_markdown(&markdown_body(input, options), Flavor::Html),
+        ("markdown", "text") => convert_markdown(&markdown_body(input, options), Flavor::Text),
         ("html", "markdown") => html_to_markdown(input),
         ("html", "text") => html_to_text(input),
+        ("html", "csv") => html_to_csv(input),
         ("text", "html") => Ok(text_to_html(input)),
         ("text", "markdown") => Ok(input.trim_end().to_string() + "\n"),
         ("csv", "json") => csv_to_json(input),
@@ -66,19 +167,30 @@ pub fn convert(input: &str, from: &str, to: &str) -> CResult<String> {
             "```json\n{}\n```\n",
             parse_json(input)?.to_pretty()
         )),
-        ("html", "csv")
-        | ("html", "json")
+        ("html", "json")
         | ("markdown", "csv")
         | ("markdown", "json")
         | ("text", "csv")
         | ("text", "json") => Err((
             ERR_NOT_SUPPORTED,
-            format!("conversion {from} → {to} is not supported in v0.1"),
+            format!("conversion {from} → {to} is not supported"),
         )),
         _ => Err((
             ERR_NOT_SUPPORTED,
-            format!("conversion {from} → {to} is not supported in v0.1"),
+            format!("conversion {from} → {to} is not supported"),
         )),
+    }
+}
+
+/// Strip the YAML front matter, or render it as a table when the
+/// caller asked to keep it.
+fn markdown_body(input: &str, options: &Options) -> String {
+    let (front, body) = frontmatter::split(input);
+    match (front, options.front_matter) {
+        (Some(front), FrontMatterMode::Table) => {
+            format!("{}\n\n{}", front.to_markdown_table(), body)
+        }
+        _ => body.to_string(),
     }
 }
 
@@ -266,5 +378,101 @@ mod tests {
         // Leading-zero codes stay strings.
         let j = convert("code\n007\n", "csv", "json").unwrap();
         assert!(j.contains("\"007\""), "{j}");
+    }
+
+    fn sample(name: &str) -> &'static str {
+        match name {
+            "markdown" => "# Title\n\nHello **there** and [a link](https://e.com).\n",
+            "html" => {
+                "<h1>Title</h1><p>Hello <strong>there</strong></p>\
+                       <table><tr><th>A</th></tr><tr><td>1</td></tr></table>"
+            }
+            "csv" => "name,qty\nMilk,2\n",
+            "json" => "{\"a\": [1, 2], \"b\": null}",
+            _ => "plain text\n\nsecond paragraph\n",
+        }
+    }
+
+    /// The advertised matrix and the dispatch must agree exactly:
+    /// every listed pair converts, every unlisted pair is
+    /// NOT_SUPPORTED (never a silent guess).
+    #[test]
+    fn matrix_is_exact() {
+        for &(from, to) in MATRIX {
+            let out = convert(sample(from), from, to)
+                .unwrap_or_else(|e| panic!("{from}→{to} is listed but failed: {e:?}"));
+            assert!(!out.is_empty(), "{from}→{to} produced nothing");
+        }
+        for &from in FORMATS {
+            for &to in FORMATS {
+                if from == to {
+                    continue; // identity conversions are always available
+                }
+                let listed = MATRIX.contains(&(from, to));
+                let result = convert(sample(from), from, to);
+                assert_eq!(
+                    result.is_ok(),
+                    listed,
+                    "{from}→{to}: listed={listed}, got {result:?}"
+                );
+                if let Err((code, _)) = result {
+                    assert_eq!(code, ERR_NOT_SUPPORTED, "{from}→{to}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn html_to_csv_pair() {
+        let csv = convert(
+            "<table><tr><th>Name</th><th>Qty</th></tr><tr><td>Milk</td><td>2</td></tr></table>",
+            "html",
+            "csv",
+        )
+        .unwrap();
+        assert_eq!(csv, "Name,Qty\r\nMilk,2\r\n");
+        // A page without a table is a parse-style failure, not empty output.
+        assert_eq!(
+            convert("<p>nothing</p>", "html", "csv").unwrap_err().0,
+            crate::ERR_CORRUPT
+        );
+    }
+
+    #[test]
+    fn front_matter_modes() {
+        let doc = "---\ntitle: Notes\ntags: [a, b]\n---\n# Body\n";
+        // Default: stripped from the rendered document.
+        let html = convert(doc, "markdown", "html").unwrap();
+        assert_eq!(html, "<h1>Body</h1>");
+        // Opted in: rendered as a table, nothing lost.
+        let options = Options::from_json("{\"front_matter\":\"table\"}").unwrap();
+        let html = convert_with_options(doc, "markdown", "html", &options).unwrap();
+        assert!(html.contains("<table>"), "{html}");
+        assert!(html.contains("<td>title</td>"), "{html}");
+        assert!(html.contains("<td>Notes</td>"), "{html}");
+        assert!(html.contains("<h1>Body</h1>"), "{html}");
+        // Text flavor too.
+        let options = Options::from_json("{\"front_matter\":\"table\"}").unwrap();
+        let text = convert_with_options(doc, "md", "txt", &options).unwrap();
+        assert!(text.contains("title | Notes"), "{text}");
+        assert!(text.contains("Body"), "{text}");
+    }
+
+    #[test]
+    fn options_are_strict() {
+        assert_eq!(
+            Options::from_json("{\"front_matter\":\"nope\"}")
+                .unwrap_err()
+                .0,
+            ERR_INVALID_ARG
+        );
+        assert_eq!(
+            Options::from_json("{\"unknown\":true}").unwrap_err().0,
+            ERR_INVALID_ARG
+        );
+        assert_eq!(Options::from_json("[]").unwrap_err().0, ERR_INVALID_ARG);
+        // Empty options mean defaults.
+        assert_eq!(Options::from_json("").unwrap(), Options::default());
+        assert_eq!(Options::from_json("{}").unwrap(), Options::default());
     }
 }
