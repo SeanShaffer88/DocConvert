@@ -424,6 +424,30 @@ fn document_syntaxes_and_streaming() {
 }
 
 #[test]
+fn normalize_tool_takes_a_style() {
+    let mut session = Session::start();
+    let result = session.call(
+        "normalize",
+        "{\"input\":\"_soft_\\n\",\"emphasis\":\"underscore\"}",
+    );
+    assert!(!is_error(&result), "{result:?}");
+    assert_eq!(text_of(&result), "_soft_\n");
+
+    let converted = session.call(
+        "convert",
+        "{\"input\":\"_soft_\\n\",\"from\":\"md\",\"to\":\"html\"}",
+    );
+    assert!(
+        text_of(&converted).contains("<em>soft</em>"),
+        "{converted:?}"
+    );
+
+    let bad = session.call("normalize", "{\"input\":\"x\",\"fence\":\"pdf\"}");
+    assert!(is_error(&bad), "{bad:?}");
+    assert!(text_of(&bad).contains("(code 1)"), "{bad:?}");
+}
+
+#[test]
 fn introspection_tools_describe_the_build() {
     let mut session = Session::start();
 

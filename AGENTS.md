@@ -105,6 +105,24 @@
   byte-faithful formats (`BYTE_FAITHFUL`). Everything else parses the
   whole document, because partial parsing would be a lie. Formats live
   in `FORMATS`, pairs in `MATRIX`, aliases in `normalize_format`.
+- One GFM table writer: `markdown::table`. The CSV/TSV → Markdown pairs
+  and both readers call it, so a table's header row and escaping have a
+  single definition. `csv::write_record` likewise backs `write_delimited`
+  and the record streamer.
+- `normalize`'s style layer is `markdown::Style` (`Emphasis`, `Fence`),
+  parsed from the CLI flags, the MCP arguments and `dc_normalize`'s
+  options object by the same `parse` functions. It changes the marker
+  characters only — never the structure — and must stay idempotent.
+  Fences come from `fence_for`, which grows past any run inside the body.
+- `src/stream.rs` is the only place that writes an output file
+  incrementally, and its rule is "identical or not at all": record
+  streaming splits quote-aware and hands each record to `parse_csv`/
+  `parse_tsv`; Markdown streaming renders one block at a time but
+  restarts from the whole file the moment it meets a reference
+  definition, a footnote definition or leading front matter
+  (`markdown::has_document_wide_constructs`). Every streamed path has a
+  test asserting equality with its whole-document reference — keep it
+  that way before adding a pair.
 - Gate: WinDevKit tools/gate.sh (fmt + clippy -D warnings BOTH
   targets + FULL tests). This crate's match-heavy code attracts
   collapsible-match lints; prefer guards from the start.

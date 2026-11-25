@@ -4,6 +4,39 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.10.0] — 2026-11-25
+
+### Added
+
+- **Tables in the document readers**: reStructuredText **simple and
+  grid** tables and AsciiDoc `|===` tables become GFM tables (header
+  rows included), so `rst → html`, `asciidoc → text` and friends carry
+  tables through — single-line cells only, no spans.
+- **Normalize style layer**: `normalize` takes an optional style —
+  `emphasis` (`asterisk` default, or `underscore`) and `fence`
+  (`backtick` default, or `tilde`) — on the CLI, the MCP tool and the
+  new `dc_normalize` ABI call. Fences grow when the code contains them,
+  so a block can never close early.
+- **`dc_normalize(input, options_json)`**: canonical Markdown at the ABI
+  level, previously CLI/MCP only.
+- **Block-level streaming**: `dc_convert_file_streaming` (MCP `stream`,
+  CLI `--stream`) now streams `text → markdown|html` per paragraph and
+  `csv|tsv → csv|tsv|text` per RFC 4180 record, each split quote-aware
+  and parsed by the same functions as the whole-file path, plus
+  `markdown → html|text` per block. Markdown watches for the
+  document-wide constructs (reference definitions, footnote definitions,
+  leading front matter) and redoes the conversion from the whole file
+  when it meets one, so streamed output is identical to the
+  whole-document output.
+
+### Changed
+
+- `csv::write_record` is public and `write_delimited` is built from it,
+  so a streamed record and a whole-file write cannot quote differently.
+- `markdown::table` is the one GFM table writer (the CSV/TSV → Markdown
+  pairs use it too).
+- Version 0.10.0 across the crate, header, and release.
+
 ## [0.9.0] — 2026-11-25
 
 ### Added

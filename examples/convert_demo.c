@@ -43,6 +43,10 @@ int main(int argc, char **argv)
     /* The metadata is readable on its own, without converting. */
     print_or_report(dc_front_matter_json("---\ntitle: Demo\ndraft: false\n---\nBody\n"));
 
+    /* Canonical Markdown, with the style layer opted into. */
+    print_or_report(dc_normalize("_soft_ text\n\n```\ncode\n```\n",
+                                 "{\"emphasis\":\"underscore\",\"fence\":\"tilde\"}"));
+
     /* A table of contents uses the same anchors as heading ids. */
     print_or_report(dc_toc_json("# Guide\n\n## Install\n\n## Run\n", "markdown"));
 

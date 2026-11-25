@@ -23,7 +23,7 @@ COMMANDS
   convert [flags] [INPUT] [OUTPUT]  convert a document (default: stdin to stdout)
   frontmatter [INPUT]               print YAML front matter as JSON
   toc [flags] [INPUT]               table of contents (markdown, html or json)
-  normalize [INPUT] [OUTPUT]        canonical Markdown
+  normalize [INPUT] [OUTPUT]        canonical Markdown (style flags below)
   formats                           JSON array of format names
   matrix                            JSON array of supported {from,to} pairs
   capabilities                      everything an agent needs, as one JSON object
@@ -41,6 +41,10 @@ CONVERT FLAGS
       --stream        copy identity conversions in chunks (files only)
   Flags also take --flag=value. Aliases: md, mkd, htm, xhtml, tsv, tab,
   txt, plain, rst, rest, adoc, asciidoc, opml.
+
+NORMALIZE FLAGS
+      --emphasis <s>      asterisk (default) or underscore
+      --fence <s>         backtick (default) or tilde
 
 EXAMPLES
   docconvert convert -f md -t html README.md README.html
@@ -113,7 +117,9 @@ fn capabilities() -> String {
     out.push_str(&convert::matrix_json());
     out.push_str(
         ",\"options\":{\"front_matter\":[\"strip\",\"table\"],\
-         \"heading_ids\":[true,false]}",
+         \"heading_ids\":[true,false],\
+         \"normalize\":{\"emphasis\":[\"asterisk\",\"underscore\"],\
+         \"fence\":[\"backtick\",\"tilde\"]}}",
     );
     out.push_str(
         ",\"commands\":[\"convert\",\"frontmatter\",\"toc\",\"normalize\",\
@@ -188,13 +194,14 @@ fn cmd_toc(args: &[String]) -> CResult<()> {
 fn cmd_normalize(args: &[String]) -> CResult<()> {
     let mut input: Option<String> = None;
     let mut output: Option<String> = None;
+    let mut style = docconvert::markdown::Style::default();
     let mut index = 0usize;
     while index < args.len() {
         let raw = &args[index];
         index += 1;
         let (flag, inline_value) = split_flag(raw);
         match flag.as_str() {
-            "-i" | "--input" | "-o" | "--output" => {
+            "--emphasis" | "--fence" | "-i" | "--input" | "-o" | "--output" => {
                 let value = match inline_value {
                     Some(value) => value,
                     None => {
@@ -206,10 +213,11 @@ fn cmd_normalize(args: &[String]) -> CResult<()> {
                         value
                     }
                 };
-                if flag == "-i" || flag == "--input" {
-                    input = Some(value);
-                } else {
-                    output = Some(value);
+                match flag.as_str() {
+                    "-i" | "--input" => input = Some(value),
+                    "-o" | "--output" => output = Some(value),
+                    "--emphasis" => style.emphasis = docconvert::markdown::Emphasis::parse(&value)?,
+                    _ => style.fence = docconvert::markdown::Fence::parse(&value)?,
                 }
             }
             other if other.starts_with('-') && other != "-" => {
@@ -232,7 +240,7 @@ fn cmd_normalize(args: &[String]) -> CResult<()> {
         Some(path) if path != "-" => read_file(path)?,
         _ => read_stdin()?,
     };
-    let normalized = docconvert::markdown::normalize(&text)?;
+    let normalized = docconvert::markdown::normalize_with(&text, style)?;
     match output.as_deref() {
         Some(path) if path != "-" => platform::write_file(path, normalized.as_bytes()),
         _ => print_stdout(&normalized),

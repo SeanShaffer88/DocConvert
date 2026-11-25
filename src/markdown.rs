@@ -223,18 +223,140 @@ fn collect_headings(blocks: &[Block], refs: &Refs, notes: &Notes, out: &mut Vec<
     }
 }
 
+/// Which character canonical emphasis uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Emphasis {
+    /// `*emphasis*` / `**strong**` — the default, and what GitHub writes.
+    #[default]
+    Asterisk,
+    /// `_emphasis_` / `__strong__`.
+    Underscore,
+}
+
+impl Emphasis {
+    pub fn parse(text: &str) -> CResult<Emphasis> {
+        match text.trim().to_lowercase().as_str() {
+            "asterisk" | "star" | "*" => Ok(Emphasis::Asterisk),
+            "underscore" | "under" | "_" => Ok(Emphasis::Underscore),
+            other => Err((
+                crate::ERR_INVALID_ARG,
+                format!("unknown emphasis style '{other}' (expected asterisk or underscore)"),
+            )),
+        }
+    }
+
+    fn marker(self) -> char {
+        match self {
+            Emphasis::Asterisk => '*',
+            Emphasis::Underscore => '_',
+        }
+    }
+}
+
+/// Which character canonical code fences use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Fence {
+    /// Triple backticks — the default.
+    #[default]
+    Backtick,
+    /// Triple tildes, for documents whose code is full of backticks.
+    Tilde,
+}
+
+impl Fence {
+    pub fn parse(text: &str) -> CResult<Fence> {
+        match text.trim().to_lowercase().as_str() {
+            "backtick" | "backticks" | "`" => Ok(Fence::Backtick),
+            "tilde" | "tildes" | "~" => Ok(Fence::Tilde),
+            other => Err((
+                crate::ERR_INVALID_ARG,
+                format!("unknown fence style '{other}' (expected backtick or tilde)"),
+            )),
+        }
+    }
+
+    fn character(self) -> char {
+        match self {
+            Fence::Backtick => '`',
+            Fence::Tilde => '~',
+        }
+    }
+}
+
+/// The style layer `normalize` can apply on top of its canonical form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Style {
+    pub emphasis: Emphasis,
+    pub fence: Fence,
+}
+
+impl Style {
+    /// The ABI's style object, e.g. `{"emphasis":"underscore"}`.
+    pub fn from_json(text: &str) -> CResult<Style> {
+        use crate::json::{parse_json, Json};
+        let mut style = Style::default();
+        if text.trim().is_empty() {
+            return Ok(style);
+        }
+        let entries = match parse_json(text)? {
+            Json::Object(entries) => entries,
+            _ => {
+                return Err((
+                    crate::ERR_INVALID_ARG,
+                    "normalize options must be a JSON object".to_string(),
+                ))
+            }
+        };
+        for (key, value) in entries {
+            let text = match value {
+                Json::Str(text) => text,
+                _ => {
+                    return Err((
+                        crate::ERR_INVALID_ARG,
+                        format!("normalize option '{key}' must be a string"),
+                    ))
+                }
+            };
+            match key.as_str() {
+                "emphasis" => style.emphasis = Emphasis::parse(&text)?,
+                "fence" => style.fence = Fence::parse(&text)?,
+                other => {
+                    return Err((
+                        crate::ERR_INVALID_ARG,
+                        format!("unknown normalize option '{other}'"),
+                    ))
+                }
+            }
+        }
+        Ok(style)
+    }
+}
+
+/// Whether a fragment defines reference links or footnotes — the two
+/// Markdown constructs that are document-wide, and therefore the two a
+/// block-at-a-time reader cannot resolve on its own.
+pub fn has_document_wide_constructs(input: &str) -> bool {
+    let collected = collect_definitions(input);
+    !collected.link_defs.is_empty() || !collected.note_defs.is_empty()
+}
+
 /// Canonical Markdown: one blank line between blocks, `#` headings, `-`
 /// bullets, sequential numbers in ordered lists, GFM tables with their
 /// alignment row, `> ` quotes, and the document's link and footnote
-/// definitions collected at the end. Inline prose is left as written —
-/// this normalizes structure, not style.
+/// definitions collected at the end.
 pub fn normalize(input: &str) -> CResult<String> {
+    normalize_with(input, Style::default())
+}
+
+/// `normalize`, with the opt-in style layer: which character emphasis
+/// and code fences use. Structure is canonical either way.
+pub fn normalize_with(input: &str, style: Style) -> CResult<String> {
     let collected = collect_definitions(input);
     let notes = collect_notes(&collected.body, collected.note_texts);
     let raw: Vec<&str> = collected.body.iter().map(|s| s.as_str()).collect();
     let blocks = parse_blocks(&raw);
     let mut parts: Vec<String> = Vec::new();
-    let rendered = render_markdown_blocks(&blocks, &collected.refs, &notes);
+    let rendered = render_markdown_blocks(&blocks, &collected.refs, &notes, style);
     if !rendered.is_empty() {
         parts.push(rendered);
     }
@@ -251,11 +373,11 @@ pub fn normalize(input: &str) -> CResult<String> {
     Ok(out)
 }
 
-fn render_markdown_blocks(blocks: &[Block], refs: &Refs, notes: &Notes) -> String {
+fn render_markdown_blocks(blocks: &[Block], refs: &Refs, notes: &Notes, style: Style) -> String {
     let parts: Vec<String> = blocks
         .iter()
         .map(|block| {
-            render_markdown_block(block, refs, notes)
+            render_markdown_block(block, refs, notes, style)
                 .trim_end()
                 .to_string()
         })
@@ -264,11 +386,12 @@ fn render_markdown_blocks(blocks: &[Block], refs: &Refs, notes: &Notes) -> Strin
     parts.join("\n\n")
 }
 
-fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes) -> String {
+fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes, style: Style) -> String {
     match block {
-        Block::Heading(level, text) => {
-            normalize_inline(&format!("{} {}", "#".repeat(*level), text.trim()))
-        }
+        Block::Heading(level, text) => normalize_inline(
+            &format!("{} {}", "#".repeat(*level), text.trim()),
+            style.emphasis.marker(),
+        ),
         Block::Paragraph(text) => normalize_inline(
             &text
                 .lines()
@@ -282,12 +405,15 @@ fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
+            style.emphasis.marker(),
         ),
         Block::Code(info, body) => {
-            format!("```{}\n{}\n```", info.trim(), body.trim_end_matches('\n'))
+            let text = body.trim_end_matches('\n');
+            let fence = fence_for(text, style.fence);
+            format!("{fence}{}\n{text}\n{fence}", info.trim())
         }
         Block::Quote(inner) => {
-            let inner = render_markdown_blocks(inner, refs, notes);
+            let inner = render_markdown_blocks(inner, refs, notes, style);
             inner
                 .lines()
                 .map(|line| {
@@ -309,7 +435,7 @@ fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes) -> String {
                     "- ".to_string()
                 };
                 let pad = " ".repeat(marker.len());
-                let inner = render_markdown_blocks(item, refs, notes);
+                let inner = render_markdown_blocks(item, refs, notes, style);
                 let mut lines = inner.lines();
                 let mut text = format!("{marker}{}", lines.next().unwrap_or(""));
                 for line in lines {
@@ -347,11 +473,36 @@ fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes) -> String {
     }
 }
 
-/// Canonical inline markup: `_emphasis_` and `__strong__` become the
-/// asterisk forms GitHub also writes, and code spans lose their padding
-/// and any surplus backticks. Line breaks inside a paragraph are left
-/// alone — they are editorial, not structural.
-fn normalize_inline(text: &str) -> String {
+/// A GFM table: the first row is the header, pipes inside cells are
+/// escaped, and every row after it is a body row.
+pub fn table(rows: &[Vec<String>]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for (index, row) in rows.iter().enumerate() {
+        let cells: Vec<String> = row.iter().map(|cell| cell.replace('|', "\\|")).collect();
+        out.push_str("| ");
+        out.push_str(&cells.join(" | "));
+        out.push_str(" |\n");
+        if index == 0 {
+            out.push('|');
+            for _ in &cells {
+                out.push_str(" --- |");
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Canonical inline markup: emphasis in the *other* marker becomes the
+/// requested one (`_x_` for the asterisk style, `*x*` for the underscore
+/// style), and code spans lose their padding and any surplus backticks.
+/// Line breaks inside a paragraph are left alone — they are editorial,
+/// not structural.
+fn normalize_inline(text: &str, marker: char) -> String {
+    let other = if marker == '*' { '_' } else { '*' };
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0usize;
@@ -381,23 +532,23 @@ fn normalize_inline(text: &str) -> String {
                 }
             }
         }
-        if c == '_' {
+        if c == other {
             let mut run = 0usize;
-            while i + run < chars.len() && chars[i + run] == '_' {
+            while i + run < chars.len() && chars[i + run] == other {
                 run += 1;
             }
             let opens = i == 0 || !chars[i - 1].is_alphanumeric();
             let starts_word = chars
                 .get(i + run)
-                .is_some_and(|next| !next.is_whitespace() && *next != '_');
+                .is_some_and(|next| !next.is_whitespace() && *next != other);
             if opens && starts_word && run <= 2 {
                 if let Some(close) = find_run(&chars, i + run, run) {
                     let ends_word = close > i + run && !chars[close - 1].is_whitespace();
                     if ends_word {
                         let inner: String = chars[i + run..close].iter().collect();
-                        out.push_str(&"*".repeat(run));
+                        out.push_str(&marker.to_string().repeat(run));
                         out.push_str(&inner);
-                        out.push_str(&"*".repeat(run));
+                        out.push_str(&marker.to_string().repeat(run));
                         i = close + run;
                         continue;
                     }
@@ -408,6 +559,23 @@ fn normalize_inline(text: &str) -> String {
         i += 1;
     }
     out
+}
+
+/// A fence at least three characters long that cannot appear inside the
+/// body, so the block always closes where it opened.
+fn fence_for(body: &str, fence: Fence) -> String {
+    let character = fence.character();
+    let mut longest = 0usize;
+    let mut run = 0usize;
+    for c in body.chars() {
+        if c == character {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    character.to_string().repeat((longest + 1).max(3))
 }
 
 /// The next run of `run` identical `needle` characters at or after
@@ -1561,6 +1729,61 @@ mod tests {
         assert_eq!(once, canonical);
         // Structure only: a second pass changes nothing.
         assert_eq!(normalize(&once).unwrap(), once);
+    }
+
+    #[test]
+    fn normalize_styles_are_opt_in() {
+        let input = "_soft_ and __loud__\n\n```\ncode\n```\n";
+        // Default: asterisk emphasis, backtick fences.
+        assert_eq!(
+            normalize(input).unwrap(),
+            "*soft* and **loud**\n\n```\ncode\n```\n"
+        );
+        let underscore = Style {
+            emphasis: Emphasis::Underscore,
+            fence: Fence::Backtick,
+        };
+        assert_eq!(
+            normalize_with(input, underscore).unwrap(),
+            "_soft_ and __loud__\n\n```\ncode\n```\n"
+        );
+        let tilde = Style {
+            emphasis: Emphasis::Asterisk,
+            fence: Fence::Tilde,
+        };
+        assert_eq!(
+            normalize_with(input, tilde).unwrap(),
+            "*soft* and **loud**\n\n~~~\ncode\n~~~\n"
+        );
+        // The underscore style converts asterisks, not underscores.
+        assert_eq!(
+            normalize_with("*soft* and **loud**\n", underscore).unwrap(),
+            "_soft_ and __loud__\n"
+        );
+        // And it parses from the ABI's object.
+        let parsed =
+            Style::from_json("{\"emphasis\":\"underscore\",\"fence\":\"tilde\"}").expect("style");
+        assert_eq!(parsed, underscore_with_tilde());
+        assert_eq!(
+            Style::from_json("{\"emphasis\":\"pdf\"}").unwrap_err().0,
+            crate::ERR_INVALID_ARG
+        );
+    }
+
+    fn underscore_with_tilde() -> Style {
+        Style {
+            emphasis: Emphasis::Underscore,
+            fence: Fence::Tilde,
+        }
+    }
+
+    #[test]
+    fn fences_grow_when_the_body_contains_them() {
+        // A fence one longer than anything inside the body.
+        assert_eq!(fence_for("plain code", Fence::Backtick), "```");
+        assert_eq!(fence_for("a ``` fence", Fence::Backtick), "````");
+        assert_eq!(fence_for("plain code", Fence::Tilde), "~~~");
+        assert_eq!(fence_for("a ~~~ run", Fence::Tilde), "~~~~");
     }
 
     #[test]

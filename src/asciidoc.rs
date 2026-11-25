@@ -76,6 +76,18 @@ pub fn to_markdown(input: &str) -> CResult<String> {
             }
         }
 
+        // Tables: `|===` … `|===`, one row per line, the first row is the
+        // header (the shape GFM tables have).
+        if line.trim() == "|===" {
+            flush(&mut blocks, &mut paragraph);
+            let (rendered, consumed) = render_table(&lines[i..]);
+            if !rendered.is_empty() {
+                blocks.push(rendered.trim_end().to_string());
+            }
+            i += consumed;
+            continue;
+        }
+
         // Delimited blocks.
         if let Some(kind) = delimiter_kind(line) {
             flush(&mut blocks, &mut paragraph);
@@ -266,6 +278,34 @@ fn render_delimited(lines: &[&str], kind: Delimiter, language: &str) -> (String,
         Delimiter::Example => text,
     };
     (rendered, i)
+}
+
+fn render_table(lines: &[&str]) -> (String, usize) {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut i = 1usize;
+    while i < lines.len() {
+        let line = lines[i];
+        if line.trim() == "|===" {
+            i += 1;
+            break;
+        }
+        if line.trim().is_empty() {
+            i += 1;
+            continue;
+        }
+        let cells: Vec<String> = line
+            .trim()
+            .trim_start_matches('|')
+            .split('|')
+            .map(|cell| cell.trim().to_string())
+            .filter(|cell| !cell.is_empty())
+            .collect();
+        if !cells.is_empty() {
+            rows.push(cells);
+        }
+        i += 1;
+    }
+    (crate::markdown::table(&rows), i)
 }
 
 fn section(line: &str) -> Option<(usize, &str)> {
@@ -552,6 +592,15 @@ mod tests {
         assert!(md.contains("[the site](https://example.com)"), "{md}");
         let html = convert_markdown(&md, Flavor::Html).unwrap();
         assert!(html.contains("<strong>strong</strong>"), "{html}");
+    }
+
+    #[test]
+    fn tables_become_markdown_tables() {
+        let doc = "[cols=\"1,1\"]\n|===\n| Name | Qty\n| Milk | 2\n| Bread | 3\n|===\n";
+        assert_eq!(
+            to_markdown(doc).unwrap(),
+            "| Name | Qty |\n| --- | --- |\n| Milk | 2 |\n| Bread | 3 |\n"
+        );
     }
 
     #[test]

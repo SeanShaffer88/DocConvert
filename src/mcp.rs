@@ -118,11 +118,13 @@ const TOOLS: &str = r#"[
   },
   {
     "name": "normalize",
-    "description": "Canonical Markdown: one blank line between blocks, # headings, - bullets, sequential ordered lists, GFM tables with alignment, definitions collected at the end. Inline prose is left as written.",
+    "description": "Canonical Markdown: one blank line between blocks, # headings, - bullets, sequential ordered lists, GFM tables with alignment, definitions collected at the end. Inline prose is left as written; the emphasis and fence markers can be chosen.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "input": { "type": "string", "description": "Markdown text to normalize." }
+        "input": { "type": "string", "description": "Markdown text to normalize." },
+        "emphasis": { "type": "string", "enum": ["asterisk", "underscore"], "description": "Emphasis marker to write (default asterisk)." },
+        "fence": { "type": "string", "enum": ["backtick", "tilde"], "description": "Code fence character to write (default backtick)." }
       },
       "required": ["input"],
       "additionalProperties": false
@@ -422,7 +424,14 @@ fn tool_toc(arguments: &Json) -> CResult<String> {
 
 fn tool_normalize(arguments: &Json) -> CResult<String> {
     let input = required_string(arguments, "input")?;
-    crate::markdown::normalize(&input)
+    let mut style = crate::markdown::Style::default();
+    if let Some(emphasis) = optional_string(arguments, "emphasis")? {
+        style.emphasis = crate::markdown::Emphasis::parse(&emphasis)?;
+    }
+    if let Some(fence) = optional_string(arguments, "fence")? {
+        style.fence = crate::markdown::Fence::parse(&fence)?;
+    }
+    crate::markdown::normalize_with(&input, style)
 }
 
 fn options_from(arguments: &Json) -> CResult<Options> {
@@ -461,6 +470,19 @@ fn capabilities_json() -> String {
                 (
                     "heading_ids",
                     Json::Array(vec![Json::Bool(true), Json::Bool(false)]),
+                ),
+                (
+                    "normalize",
+                    object(vec![
+                        (
+                            "emphasis",
+                            Json::Array(vec![string("asterisk"), string("underscore")]),
+                        ),
+                        (
+                            "fence",
+                            Json::Array(vec![string("backtick"), string("tilde")]),
+                        ),
+                    ]),
                 ),
             ]),
         ),

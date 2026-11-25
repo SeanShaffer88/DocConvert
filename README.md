@@ -25,6 +25,7 @@ $ docconvert normalize notes.md > canonical.md
 $ docconvert convert -f rst -t html notes.rst notes.html
 $ docconvert convert -f md -t opml README.md outline.opml
 $ docconvert convert --stream -f md -t md big.md copy.md
+$ docconvert normalize --emphasis underscore --fence tilde notes.md
 ```
 
 `capabilities` is the one call a local AI (or a script) needs before
@@ -42,8 +43,9 @@ and `matrix` return those pieces alone.
 | `version`, `help` | Version string, usage. |
 
 Flags: `-f/--from`, `-t/--to`, `-i/--input`, `-o/--output`,
-`--front-matter strip|table`, `--heading-ids`, `--stream` (file-to-file
-identity copies, chunk by chunk), `--options '{...}'`;
+`--front-matter strip|table`, `--heading-ids`, `--stream` (file-to-file,
+block by block), `--options '{...}'`; `normalize` adds
+`--emphasis asterisk|underscore` and `--fence backtick|tilde`;
 `--flag=value` is
 accepted too. Formats fall back to the file extensions, and stdin or
 stdout without an inferable format is an argument error rather than a
@@ -76,7 +78,7 @@ Register it with any MCP-capable client:
 | `convert_file` | `{input_path, output_path, from?, to?, front_matter?, heading_ids?, stream?}` — writes the file, returns `{written, bytes, from, to}`; formats come from the extensions. |
 | `front_matter` | `{input}` or `{path}` — the YAML front matter as JSON (`{}` when absent). |
 | `toc` | `{input\|path, from?, format?}` — the headings as a nested Markdown list, nested `<ul>`, or `[{level,text,anchor}]`. |
-| `normalize` | `{input}` — the same Markdown, rewritten canonically. |
+| `normalize` | `{input, emphasis?, fence?}` — the same Markdown, rewritten canonically. |
 | `formats`, `matrix`, `capabilities` | The same JSON introspection the CLI prints. |
 
 Failures are written for the model to read: a conversion problem comes
@@ -94,9 +96,10 @@ errors. stdout carries protocol lines only.
 | `dc_convert_opts(input, from, to, options_json)` | Same, with options (`{"front_matter":"table"}`). |
 | `dc_convert_file(in, out, from, to)` | Convert a file; null format arguments detect from file extensions. |
 | `dc_convert_file_opts(in, out, from, to, options_json)` | Same, with options. |
-| `dc_convert_file_streaming(in, out, from, to)` | Bytes written, or negative; identity conversions copy in 64 KiB chunks. |
+| `dc_convert_file_streaming(in, out, from, to)` | Bytes written, or negative; streams identity copies, text, CSV/TSV records and Markdown blocks. |
 | `dc_front_matter_json(input)` | The YAML front matter as JSON (`{}` when absent). |
 | `dc_toc_json(input, from)` | The headings as `[{"level":2,"text":"…","anchor":"…"}]` (Markdown or HTML input). |
+| `dc_normalize(input, options_json)` | Canonical Markdown; options set `emphasis` and `fence`. |
 | `dc_formats_json()` | `["markdown","html","csv","tsv","json","text","rst","asciidoc","opml"]` |
 | `dc_matrix_json()` | The supported `{from,to}` pairs, enumerable at runtime. |
 | `dc_version*`, `dc_last_error*`, `dc_free_string` | Version info, thread-local errors, disposal. |
@@ -150,10 +153,35 @@ produced. HTML input keeps an `id` the document already carries.
 `normalize` re-renders Markdown structurally: one blank line between
 blocks, `#` headings, `-` bullets, sequential ordered numbers, GFM
 tables with their alignment row, `> ` quotes, `---` rules, and link and
-footnote definitions collected at the end. Inline prose is left as
-written — it normalizes structure, not style — so running it twice
-changes nothing. `markdown→markdown` in the matrix stays a byte-faithful
-identity; normalization is opt-in.
+footnote definitions collected at the end. Inline prose keeps its words
+and line breaks — those are editorial — but its markup is canonical:
+emphasis in the chosen marker, code spans without surplus backticks.
+Running it twice changes nothing. `markdown→markdown` in the matrix stays
+a byte-faithful identity; normalization is opt-in.
+
+The style layer is opt-in too, and off means "what GitHub writes":
+`--emphasis asterisk|underscore` picks the emphasis marker and
+`--fence backtick|tilde` the code fence (fences grow automatically when
+the code contains them, so a block can never close early).
+
+## Streaming large files
+
+`dc_convert_file_streaming` (plus the MCP `stream` flag and CLI
+`--stream`) converts without holding the whole document:
+
+- identity copies of the byte-faithful formats are one 64 KiB copy;
+- `text` streams one paragraph at a time;
+- CSV and TSV stream one RFC 4180 **record** at a time — records are
+  split quote-aware and then parsed by the same `parse_csv`/`parse_tsv`
+  the whole-file path uses, so a streamed record cannot disagree;
+- Markdown streams one **block** at a time and watches for the two
+  constructs that are document-wide (reference link definitions and
+  footnotes, plus leading YAML front matter): if one appears it redoes
+  the conversion from the whole file, so the output is identical either
+  way and only the memory profile differs.
+
+Everything else parses the whole document, because partial parsing would
+be a lie rather than an optimisation.
 
 ## The matrix (v0.9)
 
@@ -217,16 +245,17 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
 - **reStructuredText**: sections by adornment order (underlined and
   overlined), bullet and enumerated lists with indentation nesting,
   literal blocks after `::`, block quotes, transitions, comments and
-  directives (dropped with their bodies), field lists, and inline
+  directives (dropped with their bodies), field lists, **simple and grid
+  tables** (they become GFM tables, header rows and all), and inline
   literals, `*emphasis*`, `**strong**`, backtick links
-  (`` `text <url>`_ ``) and roles. Grid and simple tables are out of
-  scope.
+  (`` `text <url>`_ ``) and roles.
 - **AsciiDoc**: `= Title` sections, `*`/`**` and `.`/`..` lists,
   `----`/`....` blocks with an optional `[source,lang]`, example and
   quote blocks, comments, attribute and block-attribute lines
   (dropped), admonitions, `'''` breaks, description lists, and inline
   `*strong*`, `_emphasis_`, `+literal+`, `https://…[text]` and
-  `<<xref,text>>`. Tables are out of scope.
+  `<<xref,text>>`. `|===` tables become GFM tables: one row per line,
+  first row header.
 - **OPML**: nested `<outline text="..." _note="...">`, read with the
   HTML reader (OPML is XML of the same shape) and written with escaped
   attributes. The outline of a document is its headings.
@@ -244,7 +273,9 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   `tests/cli.rs`, and a full MCP session against the spawned server in
   `tests/mcp.rs`. Tables of contents and normalization are pinned in
   all four layers (module tests, CLI, MCP, ABI), as are the three
-  document readers, the OPML round-trip and the streaming file path.
+  document readers (tables included), the OPML round-trip, the normalize
+  style layer and the streaming file paths — each streamed conversion is
+  asserted equal to its whole-document reference.
 - **External cross-check**: the sample document in
   `tests/fixtures/sample.md` was rendered by **marked** (a mainstream
   Markdown engine) and by DocConvert — the outputs are structurally
@@ -270,13 +301,13 @@ CSV→JSON always uses the first row as headers. `toc` understands ATX
 and setext headings in Markdown and `<h1>`–`<h6>` in HTML — a document
 with no headings yields an empty table of contents, and a source that
 carries no headings (CSV, JSON, text) is `NOT_SUPPORTED`. `normalize`
-covers block structure and canonical inline markup (`_emphasis_` and
-`__strong__` become the asterisk forms, code spans lose surplus
-backticks and padding); line breaks inside a paragraph are preserved
-because they are editorial. rST and AsciiDoc are subsets — tables and
-layout constructs are out of scope. Streaming applies to identity
-conversions only: everything else needs the whole document to be
-correct. See ROADMAP.md.
+covers block structure, canonical inline markup (emphasis in the chosen
+marker, code spans without surplus backticks or padding) and the fence
+character; line breaks inside a paragraph are preserved because they are
+editorial. rST and AsciiDoc are subsets — their table support covers the
+single-line-cell forms, not spans or multi-line cells. Streaming covers
+identity copies, text, CSV/TSV records and Markdown blocks; every other
+pair needs the whole document to be correct. See ROADMAP.md.
 
 ## License
 

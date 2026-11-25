@@ -1,5 +1,17 @@
 # DocConvert roadmap
 
+## Shipped in v0.10 — the candidates
+
+- **rST and AsciiDoc tables**: simple and grid tables, and `|===`
+  tables, become GFM tables — single-line cells, no spans.
+- **Emphasis style options for `normalize`**: `--emphasis
+  asterisk|underscore` and `--fence backtick|tilde`, on every surface
+  including the new `dc_normalize` ABI call.
+- **Streaming for more than identity**: text per paragraph, CSV/TSV per
+  record, Markdown per block, each proven equal to the whole-document
+  path (Markdown restarts from the file when it meets a reference or
+  footnote definition).
+
 ## Shipped in v0.9 — the roadmap, completed
 
 - **reStructuredText (subset)** as a source: sections by adornment
