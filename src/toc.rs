@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn markdown_headings_become_a_tree() {
         let entries = entries(DOC, "markdown").unwrap();
-        assert_eq!(entries.len(), 5);
+        assert_eq!(entries.len(), 6);
         assert_eq!(entries[0].level, 1);
         assert_eq!(entries[0].anchor, "title");
         assert_eq!(entries[2].anchor, "linux");

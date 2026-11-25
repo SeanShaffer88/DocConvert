@@ -269,7 +269,14 @@ fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes) -> String {
         Block::Heading(level, text) => format!("{} {}", "#".repeat(*level), text.trim()),
         Block::Paragraph(text) => text
             .lines()
-            .map(str::trim_end)
+            .enumerate()
+            .map(|(index, line)| {
+                if index == 0 {
+                    line.trim_start()
+                } else {
+                    line.trim_end()
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         Block::Code(info, body) => {
