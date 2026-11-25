@@ -205,18 +205,15 @@ fn is_field(line: &str) -> bool {
     let Some(rest) = trimmed.strip_prefix(':') else {
         return false;
     };
-    match rest.find(':') {
+    matches!(
+        rest.find(':'),
         Some(at)
             if at > 0
                 && rest[..at]
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ')
-                && (rest[at + 1..].is_empty() || rest[at + 1..].starts_with(' ')) =>
-        {
-            true
-        }
-        _ => false,
-    }
+                && (rest[at + 1..].is_empty() || rest[at + 1..].starts_with(' '))
+    )
 }
 
 fn indent_of(line: &str) -> usize {

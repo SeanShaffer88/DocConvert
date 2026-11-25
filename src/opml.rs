@@ -148,7 +148,9 @@ fn render_xml(headings: &[(usize, String)], start: usize, depth: usize, out: &mu
         let (level, text) = &headings[index];
         // A heading at or above the level that opened this run belongs to
         // an outer level.
-        if index > start && *level <= headings[start].0 {
+        // A heading above the level that opened this run belongs to an
+        // outer frame; equal levels are siblings and stay here.
+        if index > start && *level < headings[start].0 {
             break;
         }
         let mut children_end = index + 1;
@@ -208,8 +210,11 @@ mod tests {
         let md = to_markdown(DOC).unwrap();
         assert_eq!(md, "- One\n  - Two\n    a note\n");
         let html = convert_markdown(&md, Flavor::Html).unwrap();
-        assert!(html.contains("<li>One"), "{html}");
-        assert!(html.contains("<li>Two"), "{html}");
+        // The note makes the list loose, so items are wrapped in <p>.
+        assert!(html.contains("<ul>"), "{html}");
+        assert!(html.contains("One"), "{html}");
+        assert!(html.contains("Two"), "{html}");
+        assert!(html.contains("a note"), "{html}");
     }
 
     #[test]

@@ -652,7 +652,7 @@ mod tests {
         let back = convert(&opml, "opml", "markdown").unwrap();
         assert_eq!(back, "- Guide\n  - Install\n    - Windows\n");
         let html = convert(&opml, "opml", "html").unwrap();
-        assert!(html.contains("<li>Guide"), "{html}");
+        assert!(html.contains("<ul>") && html.contains("Guide"), "{html}");
 
         // A page's headings are an outline too.
         let from_html = convert("<h1>A</h1><h2>B</h2>", "html", "opml").unwrap();

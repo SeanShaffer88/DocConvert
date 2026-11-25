@@ -65,14 +65,15 @@ pub fn to_markdown(input: &str) -> CResult<String> {
             continue;
         }
 
-        // A block title (`.Title`) belongs to the block below it.
-        if line.trim_start().starts_with('.')
-            && !line.trim_start().starts_with("....")
-            && !line.trim_start().starts_with(".. ")
-        {
-            flush(&mut blocks, &mut paragraph);
-            i += 1;
-            continue;
+        // A block title (`.Title`) belongs to the block below it; `. item`
+        // is an ordered list marker, so the dot must not be followed by a
+        // space or another dot.
+        if let Some(rest) = line.trim_start().strip_prefix('.') {
+            if !rest.is_empty() && !rest.starts_with(' ') && !rest.starts_with('.') {
+                flush(&mut blocks, &mut paragraph);
+                i += 1;
+                continue;
+            }
         }
 
         // Delimited blocks.
@@ -183,12 +184,14 @@ fn is_attribute_line(line: &str) -> bool {
     let Some(rest) = trimmed.strip_prefix(':') else {
         return false;
     };
-    match rest.find(':') {
-        Some(at) if at > 0 => rest[..at]
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
-        _ => false,
-    }
+    matches!(
+        rest.find(':'),
+        Some(at)
+            if at > 0
+                && rest[..at]
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    )
 }
 
 fn source_language(line: &str) -> String {
@@ -283,8 +286,8 @@ fn bullet_text(line: &str) -> Option<(usize, &str)> {
     // Nesting comes from marker repetition, so indentation carries no
     // meaning here — trimmed markers are markers either way.
     let trimmed = line.trim_start();
-    if trimmed.starts_with("- ") {
-        return Some((1, trimmed[2..].trim()));
+    if let Some(rest) = trimmed.strip_prefix("- ") {
+        return Some((1, rest.trim()));
     }
     let stars = trimmed.chars().take_while(|c| *c == '*').count();
     if stars == 0 || stars > 5 {
@@ -473,9 +476,15 @@ fn macro_link(rest: &str) -> Option<(usize, String)> {
     let close = rest[open..].find(']')? + open;
     let target = rest[..open].trim();
     let label = rest[open + 1..close].trim();
-    let url = target
+    let url = match target
         .strip_prefix("link:")
-        .or_else(|| target.strip_prefix("xref:"))?;
+        .or_else(|| target.strip_prefix("xref:"))
+    {
+        Some(url) => url,
+        // `https://example.com[text]` needs no prefix.
+        None if target.contains("://") => target,
+        None => return None,
+    };
     if url.is_empty() {
         return None;
     }
