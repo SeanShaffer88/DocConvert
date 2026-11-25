@@ -436,10 +436,17 @@ fn render_markdown_blocks(blocks: &[Block], refs: &Refs, notes: &Notes, style: S
 
 fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes, style: Style) -> String {
     match block {
-        Block::Heading(level, text) => normalize_inline(
-            &format!("{} {}", "#".repeat(*level), text.trim()),
-            style.emphasis.marker(),
-        ),
+        Block::Heading(level, text) => {
+            // A setext heading may be written over several lines; ATX is one
+            // line, so the breaks become spaces. Leaving them in put a second
+            // block inside the heading, and the next pass split it in two
+            // (`")\n~\n---"` → `"## )\n~"` → `"## )\n\n~"`).
+            let text = text.trim().replace(['\n', '\r', '\t'], " ");
+            normalize_inline(
+                &format!("{} {}", "#".repeat(*level), text),
+                style.emphasis.marker(),
+            )
+        }
         Block::Paragraph(text) => normalize_inline(
             &text
                 .lines()
@@ -612,7 +619,6 @@ fn normalize_inline(text: &str, marker: char) -> String {
                 if !trimmed.is_empty()
                     && !trimmed.contains('`')
                     && !inner.contains('\n')
-                    && i > 0
                     && !neighbour_tick
                 {
                     out.push('`');
@@ -1973,6 +1979,18 @@ mod tests {
             let once = normalize(text).unwrap();
             assert_eq!(once, normalize(&once).unwrap(), "{text:?} → {once:?}");
         }
+    }
+
+    /// A setext heading written over two lines becomes one ATX line, and
+    /// stays that way (`tests/fuzz.rs`, seed 1 round 581).
+    #[test]
+    fn multi_line_headings_become_one_line() {
+        let once = normalize(")\n~\n---\n").expect("normalize");
+        assert_eq!(once, "## ) ~\n");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
+        let once = normalize("Title\nline two\n===\n").expect("normalize");
+        assert_eq!(once, "# Title line two\n");
+        assert_eq!(once, normalize(&once).expect("normalize twice"));
     }
 
     /// Alignment is part of the fixed point: `:---` and `---` mean the same
