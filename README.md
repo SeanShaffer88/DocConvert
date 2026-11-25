@@ -18,6 +18,10 @@ $ cat notes.md | docconvert convert -f md -t text
 $ docconvert convert --from=md --to=html --front-matter=table post.md
 $ docconvert frontmatter post.md
 {"title":"Release 2.0","draft":false}
+$ docconvert toc README.md
+- [DocConvert](#docconvert)
+  - [Command line](#command-line-docconvertexe)
+$ docconvert normalize notes.md > canonical.md
 ```
 
 `capabilities` is the one call a local AI (or a script) needs before
@@ -29,11 +33,14 @@ and `matrix` return those pieces alone.
 |---|---|
 | `convert [flags] [IN] [OUT]` | Convert; omitted or `-` paths mean stdin/stdout. |
 | `frontmatter [IN]` | YAML front matter as JSON (`{}` when absent). |
+| `toc [flags] [IN]` | Table of contents (`--format markdown\|html\|json`, `--from md\|html`). |
+| `normalize [IN] [OUT]` | Rewrite Markdown canonically (same document, diffable). |
 | `formats`, `matrix`, `capabilities` | JSON introspection. |
 | `version`, `help` | Version string, usage. |
 
 Flags: `-f/--from`, `-t/--to`, `-i/--input`, `-o/--output`,
-`--front-matter strip|table`, `--options '{...}'`; `--flag=value` is
+`--front-matter strip|table`, `--heading-ids`, `--options '{...}'`;
+`--flag=value` is
 accepted too. Formats fall back to the file extensions, and stdin or
 stdout without an inferable format is an argument error rather than a
 guess.
@@ -64,6 +71,8 @@ Register it with any MCP-capable client:
 | `convert` | `{input, from, to, front_matter?}` — the converted document as text. |
 | `convert_file` | `{input_path, output_path, from?, to?, front_matter?}` — writes the file, returns `{written, bytes, from, to}`; formats come from the extensions. |
 | `front_matter` | `{input}` or `{path}` — the YAML front matter as JSON (`{}` when absent). |
+| `toc` | `{input\|path, from?, format?}` — the headings as a nested Markdown list, nested `<ul>`, or `[{level,text,anchor}]`. |
+| `normalize` | `{input}` — the same Markdown, rewritten canonically. |
 | `formats`, `matrix`, `capabilities` | The same JSON introspection the CLI prints. |
 
 Failures are written for the model to read: a conversion problem comes
@@ -82,7 +91,8 @@ errors. stdout carries protocol lines only.
 | `dc_convert_file(in, out, from, to)` | Convert a file; null format arguments detect from file extensions. |
 | `dc_convert_file_opts(in, out, from, to, options_json)` | Same, with options. |
 | `dc_front_matter_json(input)` | The YAML front matter as JSON (`{}` when absent). |
-| `dc_formats_json()` | `["markdown","html","csv","json","text"]` |
+| `dc_toc_json(input, from)` | The headings as `[{"level":2,"text":"…","anchor":"…"}]` (Markdown or HTML input). |
+| `dc_formats_json()` | `["markdown","html","csv","tsv","json","text"]` |
 | `dc_matrix_json()` | The supported `{from,to}` pairs, enumerable at runtime. |
 | `dc_version*`, `dc_last_error*`, `dc_free_string` | Version info, thread-local errors, disposal. |
 
@@ -113,11 +123,34 @@ or `""` means defaults. Unknown keys and values are
 |---|---|---|
 | `front_matter` | `"strip"` (default) | Drop the YAML block from md→html / md→text. |
 | | `"table"` | Render it as a key/value table instead. |
+| `heading_ids` | `false` (default) | Markdown-to-HTML headings carry no `id`. |
+| | `true` | `<h2 id="slug">` — the anchors `toc` reports. |
 
 The metadata is never lost either way: `dc_front_matter_json` returns
 it as a JSON object regardless of how the document is converted.
 
-## The matrix (v0.7)
+## Tables of contents and canonical Markdown (v0.8)
+
+`toc` reads the headings of a Markdown or HTML document — never a
+different conversion, so the matrix is untouched — and renders them as
+a nested Markdown list, nested `<ul>`/`<li>` markup, or a JSON array of
+`{level, text, anchor}`.
+
+Anchors are GitHub's: lowercase, punctuation dropped, whitespace runs
+collapsed to `-`, and repeats numbered `-1`, `-2`… `{"heading_ids":true}`
+makes Markdown→HTML write exactly those anchors onto the headings, so a
+generated table of contents links to ids the conversion actually
+produced. HTML input keeps an `id` the document already carries.
+
+`normalize` re-renders Markdown structurally: one blank line between
+blocks, `#` headings, `-` bullets, sequential ordered numbers, GFM
+tables with their alignment row, `> ` quotes, `---` rules, and link and
+footnote definitions collected at the end. Inline prose is left as
+written — it normalizes structure, not style — so running it twice
+changes nothing. `markdown→markdown` in the matrix stays a byte-faithful
+identity; normalization is opt-in.
+
+## The matrix (v0.8)
 
 markdown→html, markdown→text, markdown→csv and markdown→tsv (a document
 that is one table), html→markdown, html→text, html→csv, html→tsv,
@@ -180,7 +213,8 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   file API with its error codes in `tests/file_io.rs`, the CLI driven
   end to end through pipes, introspection JSON and exit codes in
   `tests/cli.rs`, and a full MCP session against the spawned server in
-  `tests/mcp.rs`.
+  `tests/mcp.rs`. Tables of contents and normalization are pinned in
+  all four layers (module tests, CLI, MCP, ABI).
 - **External cross-check**: the sample document in
   `tests/fixtures/sample.md` was rendered by **marked** (a mainstream
   Markdown engine) and by DocConvert — the outputs are structurally
@@ -190,7 +224,7 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   target) with `-D warnings`, full suite — green. Pure logic, no
   Win32 calls.
 
-## Scope limits (v0.7)
+## Scope limits (v0.8)
 
 Markdown: no HTML pass-through; link titles reach the HTML output (and
 come back through html→markdown) but are dropped from the plain-text
@@ -202,7 +236,12 @@ numbers footnotes some other way still converts, just without the
 `[^n]` markers.
 HTML: expects roughly well-formed input (no tag-soup repair
 heuristics); html→csv uses the first table only and ignores spans.
-CSV→JSON always uses the first row as headers. See ROADMAP.md.
+CSV→JSON always uses the first row as headers. `toc` understands ATX
+and setext headings in Markdown and `<h1>`–`<h6>` in HTML — a document
+with no headings yields an empty table of contents, and a source that
+carries no headings (CSV, JSON, text) is `NOT_SUPPORTED`. `normalize`
+covers block structure only: emphasis markers, inline code and line
+wrapping inside a paragraph are preserved. See ROADMAP.md.
 
 ## License
 

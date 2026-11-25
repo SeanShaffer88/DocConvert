@@ -22,6 +22,8 @@ USAGE
 COMMANDS
   convert [flags] [INPUT] [OUTPUT]  convert a document (default: stdin to stdout)
   frontmatter [INPUT]               print YAML front matter as JSON
+  toc [flags] [INPUT]               table of contents (markdown, html or json)
+  normalize [INPUT] [OUTPUT]        canonical Markdown
   formats                           JSON array of format names
   matrix                            JSON array of supported {from,to} pairs
   capabilities                      everything an agent needs, as one JSON object
@@ -34,6 +36,7 @@ CONVERT FLAGS
   -i, --input <path>      input file ('-' or omitted = stdin)
   -o, --output <path>     output file ('-' or omitted = stdout)
       --front-matter <m>  strip (default) or table
+      --heading-ids       id="slug" anchors on md->html headings
       --options <json>    options object, e.g. {"front_matter":"table"}
   Flags also take --flag=value. Aliases: md, mkd, htm, xhtml, tsv, tab,
   txt, plain.
@@ -42,7 +45,9 @@ EXAMPLES
   docconvert convert -f md -t html README.md README.html
   cat notes.md | docconvert convert -f md -t text
   docconvert convert --from=md --to=html --front-matter=table post.md
-  docconvert frontmatter post.md
+  docconvert convert -f md -t html --heading-ids --options '{"heading_ids":true}' post.md
+  docconvert toc --format html README.md
+  docconvert normalize notes.md
   docconvert capabilities
 
 EXIT CODES
@@ -85,6 +90,8 @@ fn run(args: &[String]) -> CResult<()> {
         "matrix" => print_stdout(&with_newline(convert::matrix_json())),
         "capabilities" => print_stdout(&with_newline(capabilities())),
         "frontmatter" => cmd_frontmatter(rest),
+        "toc" => cmd_toc(rest),
+        "normalize" => cmd_normalize(rest),
         "convert" => cmd_convert(rest),
         other => Err(invalid(format!(
             "unknown command '{other}' (try 'docconvert help')"
@@ -101,10 +108,13 @@ fn capabilities() -> String {
     out.push_str(&convert::formats_json());
     out.push_str(",\"matrix\":");
     out.push_str(&convert::matrix_json());
-    out.push_str(",\"options\":{\"front_matter\":[\"strip\",\"table\"]}");
     out.push_str(
-        ",\"commands\":[\"convert\",\"frontmatter\",\"formats\",\"matrix\",\
-         \"capabilities\",\"version\",\"help\"]",
+        ",\"options\":{\"front_matter\":[\"strip\",\"table\"],\
+         \"heading_ids\":[true,false]}",
+    );
+    out.push_str(
+        ",\"commands\":[\"convert\",\"frontmatter\",\"toc\",\"normalize\",\
+         \"formats\",\"matrix\",\"capabilities\",\"version\",\"help\"]",
     );
     out.push_str(",\"error_codes\":");
     out.push_str(&convert::error_codes_json());
@@ -114,6 +124,116 @@ fn capabilities() -> String {
 
 fn with_newline(text: String) -> String {
     text + "\n"
+}
+
+/// `docconvert toc [--from fmt] [--format markdown|html|json] [INPUT]`
+fn cmd_toc(args: &[String]) -> CResult<()> {
+    let mut from: Option<String> = None;
+    let mut format: Option<String> = None;
+    let mut input: Option<String> = None;
+    let mut index = 0usize;
+    while index < args.len() {
+        let raw = &args[index];
+        index += 1;
+        let (flag, inline_value) = split_flag(raw);
+        match flag.as_str() {
+            "-f" | "--from" | "--format" | "-t" | "--to" | "-i" | "--input" => {
+                let value = match inline_value {
+                    Some(value) => value,
+                    None => {
+                        let value = match args.get(index) {
+                            Some(value) => value.clone(),
+                            None => return Err(invalid(format!("{flag} needs a value"))),
+                        };
+                        index += 1;
+                        value
+                    }
+                };
+                match flag.as_str() {
+                    "-f" | "--from" => from = Some(value),
+                    "--format" | "-t" | "--to" => format = Some(value),
+                    _ => input = Some(value),
+                }
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(invalid(format!(
+                    "unknown option '{flag}' (try 'docconvert help')"
+                )));
+            }
+            _ => input = Some(flag.clone()),
+        }
+    }
+    let from = match from {
+        Some(from) => from,
+        None => match input.as_deref() {
+            Some(path) if path != "-" => {
+                convert::format_for_path(path).unwrap_or_else(|| "markdown".to_string())
+            }
+            _ => "markdown".to_string(),
+        },
+    };
+    let text = match input.as_deref() {
+        Some(path) if path != "-" => read_file(path)?,
+        _ => read_stdin()?,
+    };
+    let format = format.unwrap_or_else(|| "markdown".to_string());
+    let rendered = docconvert::toc::render_from(&text, &from, &format)?;
+    print_stdout(&rendered)
+}
+
+/// `docconvert normalize [INPUT] [OUTPUT]` — canonical Markdown.
+fn cmd_normalize(args: &[String]) -> CResult<()> {
+    let mut input: Option<String> = None;
+    let mut output: Option<String> = None;
+    let mut index = 0usize;
+    while index < args.len() {
+        let raw = &args[index];
+        index += 1;
+        let (flag, inline_value) = split_flag(raw);
+        match flag.as_str() {
+            "-i" | "--input" | "-o" | "--output" => {
+                let value = match inline_value {
+                    Some(value) => value,
+                    None => {
+                        let value = match args.get(index) {
+                            Some(value) => value.clone(),
+                            None => return Err(invalid(format!("{flag} needs a value"))),
+                        };
+                        index += 1;
+                        value
+                    }
+                };
+                if flag == "-i" || flag == "--input" {
+                    input = Some(value);
+                } else {
+                    output = Some(value);
+                }
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(invalid(format!(
+                    "unknown option '{flag}' (try 'docconvert help')"
+                )));
+            }
+            _ => {
+                if input.is_none() {
+                    input = Some(flag.clone());
+                } else if output.is_none() {
+                    output = Some(flag.clone());
+                } else {
+                    return Err(invalid("normalize takes at most two paths"));
+                }
+            }
+        }
+    }
+    let text = match input.as_deref() {
+        Some(path) if path != "-" => read_file(path)?,
+        _ => read_stdin()?,
+    };
+    let normalized = docconvert::markdown::normalize(&text)?;
+    match output.as_deref() {
+        Some(path) if path != "-" => platform::write_file(path, normalized.as_bytes()),
+        _ => print_stdout(&normalized),
+    }
 }
 
 fn cmd_frontmatter(args: &[String]) -> CResult<()> {
@@ -139,6 +259,7 @@ fn cmd_frontmatter(args: &[String]) -> CResult<()> {
 
 #[derive(Debug, Default)]
 struct ConvertArgs {
+    heading_ids: bool,
     input: Option<String>,
     output: Option<String>,
     from: Option<String>,
@@ -177,6 +298,9 @@ fn cmd_convert(raw_args: &[String]) -> CResult<()> {
     };
     if let Some(mode) = args.front_matter {
         options.front_matter = FrontMatterMode::parse(&mode)?;
+    }
+    if args.heading_ids {
+        options.heading_ids = true;
     }
     let input = match args.input.as_deref() {
         Some(path) if path != "-" => read_file(path)?,
@@ -233,6 +357,8 @@ fn parse_convert_args(args: &[String]) -> CResult<ConvertArgs> {
                 "--front-matter" => parsed.front_matter = Some(value),
                 _ => parsed.input = Some(value),
             }
+        } else if flag == "--heading-ids" {
+            parsed.heading_ids = true;
         } else if flag.starts_with('-') && flag != "-" {
             return Err(invalid(format!(
                 "unknown option '{flag}' (try 'docconvert help')"

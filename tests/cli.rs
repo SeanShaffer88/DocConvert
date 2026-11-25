@@ -162,6 +162,97 @@ fn front_matter_on_the_command_line() {
 }
 
 #[test]
+fn table_of_contents_and_normalization() {
+    let doc = "# Guide\n\n## Install\n\n### Windows\n\n## Run\n";
+
+    let markdown = run(&["toc"], Some(doc));
+    assert!(markdown.status.success(), "{}", err(&markdown));
+    assert_eq!(
+        out(&markdown).trim_end(),
+        "- [Guide](#guide)\n  - [Install](#install)\n    - [Windows](#windows)\n  - [Run](#run)"
+    );
+
+    // `-t` is the same switch as `--format`.
+    let json = run(&["toc", "--format", "json"], Some(doc));
+    assert!(json.status.success(), "{}", err(&json));
+    assert_eq!(
+        out(&json).trim_end(),
+        "[{\"level\":1,\"text\":\"Guide\",\"anchor\":\"guide\"},\
+         {\"level\":2,\"text\":\"Install\",\"anchor\":\"install\"},\
+         {\"level\":3,\"text\":\"Windows\",\"anchor\":\"windows\"},\
+         {\"level\":2,\"text\":\"Run\",\"anchor\":\"run\"}]"
+    );
+
+    // HTML input keeps the ids the document already carries.
+    let page = "<h1>Top</h1><h2 id=\"keep-me\">Setup</h2><h2>Usage</h2>";
+    let html = run(&["toc", "--from", "html", "-t", "html"], Some(page));
+    assert!(html.status.success(), "{}", err(&html));
+    let markup = out(&html);
+    assert!(
+        markup.contains("<a href=\"#keep-me\">Setup</a>"),
+        "{markup}"
+    );
+    assert!(markup.contains("<a href=\"#usage\">Usage</a>"), "{markup}");
+    assert_eq!(markup.matches("<ul>").count(), 2, "{markup}");
+    assert_eq!(markup.matches("</ul>").count(), 2, "{markup}");
+
+    // A document without headings has an empty table of contents.
+    let empty = run(&["toc"], Some("just a paragraph\n"));
+    assert!(empty.status.success(), "{}", err(&empty));
+    assert_eq!(out(&empty), "");
+
+    // Sources that carry no headings are refused, not guessed at.
+    let refused = run(&["toc", "--from", "csv"], Some("a,b\n1,2\n"));
+    assert_eq!(refused.status.code(), Some(2), "{}", err(&refused));
+    assert!(
+        err(&refused).starts_with("docconvert: "),
+        "{}",
+        err(&refused)
+    );
+
+    // Markdown in, canonical Markdown out — and normalizing twice is a
+    // no-op, so the pass is stable.
+    let messy = "#   Notes\n\n*  one   \n* two\n\n3. first\n7. second\n";
+    let once = run(&["normalize"], Some(messy));
+    assert!(once.status.success(), "{}", err(&once));
+    assert_eq!(
+        out(&once).trim_end(),
+        "# Notes\n\n- one\n- two\n\n1. first\n2. second"
+    );
+    let twice_input = out(&once);
+    let twice = run(&["normalize"], Some(twice_input.as_str()));
+    assert_eq!(out(&twice), out(&once));
+}
+
+#[test]
+fn heading_ids_are_opt_in() {
+    let doc = "# Guide\n\n## Install\n";
+    let plain = run(&["convert", "-f", "md", "-t", "html"], Some(doc));
+    assert_eq!(out(&plain), "<h1>Guide</h1>\n<h2>Install</h2>");
+
+    for extra in [
+        vec!["--heading-ids"],
+        vec!["--options", "{\"heading_ids\":true}"],
+    ] {
+        let mut args = vec!["convert", "-f", "md", "-t", "html"];
+        args.extend(extra);
+        let ids = run(&args, Some(doc));
+        assert!(ids.status.success(), "{}", err(&ids));
+        assert_eq!(
+            out(&ids),
+            "<h1 id=\"guide\">Guide</h1>\n<h2 id=\"install\">Install</h2>"
+        );
+    }
+
+    // The anchors agree with the table of contents.
+    let toc = run(&["toc"], Some(doc));
+    assert_eq!(
+        out(&toc).trim_end(),
+        "- [Guide](#guide)\n  - [Install](#install)"
+    );
+}
+
+#[test]
 fn converts_files_and_stays_quiet() {
     let dir = scratch_dir("files");
     let md = dir.join("notes.md");

@@ -68,9 +68,25 @@
   lists are recognized by `task_marker` (a `[ ]`/`[x]` prefix on an
   item's first paragraph) so the marker never leaks into the rendered
   text — keep that check in the list renderer's first-block path.
+- Heading anchors have one owner: `markdown::slugify` plus `Slugs`
+  (GitHub style — lowercase, punctuation dropped, whitespace runs to
+  `-`, repeats `-1`, `-2`). `markdown::headings` and `html::headings`
+  feed `toc::entries`, and the same `Slugs` run gives md→html its
+  `id="…"` when `heading_ids` is on. Never re-implement a slug rule
+  anywhere else; the TOC must keep pointing at the ids the conversion
+  writes.
+- `toc` is a view over headings, not a matrix pair: sources without
+  headings are NOT_SUPPORTED, and `convert::MATRIX` stays at 26 pairs
+  (markdown→markdown remains a byte-faithful identity).
+- `markdown::normalize` re-renders blocks canonically and must stay
+  idempotent: definitions go last, inline prose is left as written, and
+  `render_markdown_block` is the single place block shapes are printed.
 - Byte offsets in the Markdown block parser must go through
   `line_indent` / `tail_from` — slicing a line at a raw byte column
   can panic mid-UTF-8.
+- `src/toc.rs` holds the TOC renderers (markdown / html / json) plus
+  `depths`, which turns heading levels into nesting; the `<ul>`/`<li>`
+  writer must stay balanced — the tests count tags for that reason.
 - Gate: WinDevKit tools/gate.sh (fmt + clippy -D warnings BOTH
   targets + FULL tests). This crate's match-heavy code attracts
   collapsible-match lints; prefer guards from the start.

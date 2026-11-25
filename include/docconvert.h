@@ -1,4 +1,4 @@
-/* DocConvert.dll v0.7.0 — document conversion behind one clean C ABI:
+/* DocConvert.dll v0.8.0 — document conversion behind one clean C ABI:
  * Markdown, HTML, CSV, TSV, JSON, and plain text. All strings UTF-8,
  * NUL-terminated. char* results are caller-owned: free with
  * dc_free_string(). Format names: "markdown"/"md", "html",
@@ -57,6 +57,10 @@ DC_API char *dc_convert_opts(const char *input, const char *from_format,
 /* The YAML front matter of a Markdown document as a JSON object;
  * "{}" when there is none (or it is malformed). */
 DC_API char *dc_front_matter_json(const char *input);
+/* The headings of a Markdown or HTML document as
+ * [{"level":2,"text":"...","anchor":"..."}] — the same anchors that
+ * {"heading_ids":true} writes into Markdown->HTML output. */
+DC_API char *dc_toc_json(const char *input, const char *from_format);
 DC_API int dc_convert_file(const char *in_path, const char *out_path,
                            const char *from_format, const char *to_format); /* NULL format = by extension */
 DC_API int dc_convert_file_opts(const char *in_path, const char *out_path,

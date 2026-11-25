@@ -39,13 +39,22 @@ pub enum Flavor {
 }
 
 pub fn convert_markdown(input: &str, flavor: Flavor) -> CResult<String> {
-    let (refs, note_texts, lines) = collect_definitions(input);
-    let notes = collect_notes(&lines, note_texts);
-    let lines: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+    convert_markdown_with(input, flavor, false)
+}
+
+/// `convert_markdown`, with GitHub-style `id="slug"` anchors on the
+/// headings when `heading_ids` is set (what `{"heading_ids":true}`
+/// asks for, and what makes a generated table of contents clickable).
+pub fn convert_markdown_with(input: &str, flavor: Flavor, heading_ids: bool) -> CResult<String> {
+    let collected = collect_definitions(input);
+    let notes = collect_notes(&collected.body, collected.note_texts);
+    let refs = &collected.refs;
+    let lines: Vec<&str> = collected.body.iter().map(|s| s.as_str()).collect();
     let blocks = parse_blocks(&lines);
+    let mut slugs = Slugs::default();
     let rendered: Vec<String> = blocks
         .iter()
-        .map(|b| render_block(b, flavor, &refs, &notes))
+        .map(|b| render_block(b, flavor, refs, &notes, &mut slugs, heading_ids))
         .collect();
     let sep = match flavor {
         Flavor::Html => "\n",
@@ -53,7 +62,7 @@ pub fn convert_markdown(input: &str, flavor: Flavor) -> CResult<String> {
     };
     let mut out = rendered.join(sep);
     if !notes.is_empty() {
-        out.push_str(&render_notes(&notes, flavor, &refs));
+        out.push_str(&render_notes(&notes, flavor, refs));
     }
     if flavor == Flavor::Text && !out.is_empty() {
         out.push('\n');
@@ -103,8 +112,9 @@ pub fn markdown_to_csv(input: &str) -> CResult<String> {
 
 /// The table rows behind markdown→csv and markdown→tsv.
 pub fn markdown_rows(input: &str) -> CResult<Vec<Vec<String>>> {
-    let (refs, _note_texts, lines) = collect_definitions(input);
-    let raw: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+    let collected = collect_definitions(input);
+    let refs = &collected.refs;
+    let raw: Vec<&str> = collected.body.iter().map(|s| s.as_str()).collect();
     let blocks = parse_blocks(&raw);
     let mut table: Option<&Block> = None;
     let mut heading = false;
@@ -125,7 +135,7 @@ pub fn markdown_rows(input: &str) -> CResult<Vec<Vec<String>>> {
     };
     // Cells are Markdown, so render them to plain text first.
     let empty = Notes::default();
-    let cell = |text: &str| inline_ctx(text, Flavor::Text, &refs, &empty);
+    let cell = |text: &str| inline_ctx(text, Flavor::Text, refs, &empty);
     let width = headers.len();
     let mut out: Vec<Vec<String>> = Vec::with_capacity(rows.len() + 1);
     out.push(headers.iter().map(|header| cell(header)).collect());
@@ -135,6 +145,210 @@ pub fn markdown_rows(input: &str) -> CResult<Vec<Vec<String>>> {
         out.push(cells);
     }
     Ok(out)
+}
+
+/// GitHub-style heading anchors: lowercase, punctuation dropped,
+/// whitespace and dashes collapsed to a single dash.
+pub fn slugify(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut pending_dash = false;
+    for c in text.chars() {
+        if c.is_alphanumeric() {
+            if pending_dash && !out.is_empty() {
+                out.push('-');
+            }
+            pending_dash = false;
+            for lower in c.to_lowercase() {
+                out.push(lower);
+            }
+        } else if c == '_' {
+            if pending_dash && !out.is_empty() {
+                out.push('-');
+            }
+            pending_dash = false;
+            out.push('_');
+        } else if c.is_whitespace() || c == '-' {
+            pending_dash = true;
+        }
+    }
+    out
+}
+
+/// Anchors already handed out in a document, so repeated headings get
+/// `-1`, `-2`, … the way GitHub numbers them.
+#[derive(Debug, Default)]
+pub struct Slugs {
+    seen: HashMap<String, usize>,
+}
+
+impl Slugs {
+    pub fn next(&mut self, text: &str) -> String {
+        let base = slugify(text);
+        let count = self.seen.entry(base.clone()).or_insert(0);
+        *count += 1;
+        if *count == 1 {
+            base
+        } else {
+            format!("{base}-{}", *count - 1)
+        }
+    }
+}
+
+/// The headings of a Markdown document in document order, as
+/// (level, plain text) — the input to a table of contents.
+pub fn headings(input: &str) -> CResult<Vec<(usize, String)>> {
+    let collected = collect_definitions(input);
+    let notes = collect_notes(&collected.body, collected.note_texts);
+    let raw: Vec<&str> = collected.body.iter().map(|s| s.as_str()).collect();
+    let blocks = parse_blocks(&raw);
+    let mut out = Vec::new();
+    collect_headings(&blocks, &collected.refs, &notes, &mut out);
+    Ok(out)
+}
+
+fn collect_headings(blocks: &[Block], refs: &Refs, notes: &Notes, out: &mut Vec<(usize, String)>) {
+    for block in blocks {
+        match block {
+            Block::Heading(level, text) => {
+                out.push((*level, inline_ctx(text, Flavor::Text, refs, notes)));
+            }
+            Block::Quote(inner) => collect_headings(inner, refs, notes, out),
+            Block::List(_, items) => {
+                for item in items {
+                    collect_headings(item, refs, notes, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Canonical Markdown: one blank line between blocks, `#` headings, `-`
+/// bullets, sequential numbers in ordered lists, GFM tables with their
+/// alignment row, `> ` quotes, and the document's link and footnote
+/// definitions collected at the end. Inline prose is left as written —
+/// this normalizes structure, not style.
+pub fn normalize(input: &str) -> CResult<String> {
+    let collected = collect_definitions(input);
+    let notes = collect_notes(&collected.body, collected.note_texts);
+    let raw: Vec<&str> = collected.body.iter().map(|s| s.as_str()).collect();
+    let blocks = parse_blocks(&raw);
+    let mut parts: Vec<String> = Vec::new();
+    let rendered = render_markdown_blocks(&blocks, &collected.refs, &notes);
+    if !rendered.is_empty() {
+        parts.push(rendered);
+    }
+    if !collected.link_defs.is_empty() {
+        parts.push(collected.link_defs.join("\n"));
+    }
+    if !collected.note_defs.is_empty() {
+        parts.push(collected.note_defs.join("\n"));
+    }
+    let mut out = parts.join("\n\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+fn render_markdown_blocks(blocks: &[Block], refs: &Refs, notes: &Notes) -> String {
+    let parts: Vec<String> = blocks
+        .iter()
+        .map(|block| {
+            render_markdown_block(block, refs, notes)
+                .trim_end()
+                .to_string()
+        })
+        .filter(|text| !text.is_empty())
+        .collect();
+    parts.join("\n\n")
+}
+
+fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes) -> String {
+    match block {
+        Block::Heading(level, text) => format!("{} {}", "#".repeat(*level), text.trim()),
+        Block::Paragraph(text) => text
+            .lines()
+            .enumerate()
+            .map(|(index, line)| {
+                if index == 0 {
+                    line.trim_start()
+                } else {
+                    line.trim_end()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Block::Code(info, body) => {
+            format!("```{}\n{}\n```", info.trim(), body.trim_end_matches('\n'))
+        }
+        Block::Quote(inner) => {
+            let inner = render_markdown_blocks(inner, refs, notes);
+            inner
+                .lines()
+                .map(|line| {
+                    if line.trim().is_empty() {
+                        ">".to_string()
+                    } else {
+                        format!("> {line}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        Block::List(ordered, items) => {
+            let mut out: Vec<String> = Vec::new();
+            for (index, item) in items.iter().enumerate() {
+                let marker = if *ordered {
+                    format!("{}. ", index + 1)
+                } else {
+                    "- ".to_string()
+                };
+                let pad = " ".repeat(marker.len());
+                let inner = render_markdown_blocks(item, refs, notes);
+                let mut lines = inner.lines();
+                let mut text = format!("{marker}{}", lines.next().unwrap_or(""));
+                for line in lines {
+                    text.push('\n');
+                    if !line.trim().is_empty() {
+                        text.push_str(&pad);
+                    }
+                    text.push_str(line);
+                }
+                out.push(text);
+            }
+            out.join("\n")
+        }
+        Block::Rule => "---".to_string(),
+        Block::Table(headers, aligns, rows) => {
+            let mut out = String::new();
+            out.push_str("| ");
+            out.push_str(&joined_cells(headers));
+            out.push_str(" |\n|");
+            for index in 0..headers.len() {
+                out.push_str(match aligns.get(index) {
+                    Some('l') => " :--- |",
+                    Some('c') => " :---: |",
+                    Some('r') => " ---: |",
+                    _ => " --- |",
+                });
+            }
+            for row in rows {
+                out.push_str("\n| ");
+                out.push_str(&joined_cells(row));
+                out.push_str(" |");
+            }
+            out
+        }
+    }
+}
+
+fn joined_cells(cells: &[String]) -> String {
+    cells
+        .iter()
+        .map(|cell| cell.trim())
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 /// Normalize a reference label the CommonMark way: trim, collapse
@@ -156,14 +370,30 @@ pub fn normalize_label(label: &str) -> String {
     out.to_lowercase()
 }
 
+/// A document split into what the parsers need: the reference links,
+/// the footnote texts, the body lines with definitions removed, and the
+/// definitions themselves in the order they appeared (so normalization
+/// can put them back verbatim).
+#[derive(Debug, Default)]
+struct Collected {
+    refs: Refs,
+    note_texts: HashMap<String, String>,
+    body: Vec<String>,
+    link_defs: Vec<String>,
+    note_defs: Vec<String>,
+}
+
 /// Pull `[label]: url "title"` and `[^label]: note` lines out of the
 /// document (fenced code is left alone) and hand back the remaining
 /// lines. Definitions are document-wide, so this runs before block
 /// parsing.
-fn collect_definitions(input: &str) -> (Refs, HashMap<String, String>, Vec<String>) {
+fn collect_definitions(input: &str) -> Collected {
     let mut refs = Refs::new();
     let mut notes: HashMap<String, String> = HashMap::new();
     let mut kept: Vec<String> = Vec::new();
+    let mut link_defs: Vec<String> = Vec::new();
+    let mut note_defs: Vec<String> = Vec::new();
+    let mut current_note_line: Option<usize> = None;
     let mut in_fence = false;
     let mut open_note: Option<String> = None;
     for line in input.lines() {
@@ -181,24 +411,43 @@ fn collect_definitions(input: &str) -> (Refs, HashMap<String, String>, Vec<Strin
                     if let Some(text) = notes.get_mut(&label) {
                         text.push(' ');
                         text.push_str(line.trim());
+                        if let Some(at) = current_note_line {
+                            if let Some(def) = note_defs.get_mut(at) {
+                                def.push(' ');
+                                def.push_str(line.trim());
+                            }
+                        }
                     }
                     continue;
                 }
                 open_note = None;
             }
             if let Some((label, text)) = parse_footnote_definition(line) {
-                notes.entry(label.clone()).or_insert(text);
+                if !notes.contains_key(&label) {
+                    notes.insert(label.clone(), text.clone());
+                    note_defs.push(format!("[^{label}]: {text}"));
+                    current_note_line = Some(note_defs.len() - 1);
+                }
                 open_note = Some(label);
                 continue;
             }
             if let Some((label, url, title)) = parse_definition(line) {
+                if !refs.contains_key(&normalize_label(&label)) {
+                    link_defs.push(line.trim().to_string());
+                }
                 refs.entry(normalize_label(&label)).or_insert((url, title));
                 continue;
             }
         }
         kept.push(line.to_string());
     }
-    (refs, notes, kept)
+    Collected {
+        refs,
+        note_texts: notes,
+        body: kept,
+        link_defs,
+        note_defs,
+    }
 }
 
 /// `[^label]: note text` with up to three spaces of indentation.
@@ -655,13 +904,23 @@ fn item_task(item: &[Block]) -> Option<(bool, &str)> {
     }
 }
 
-fn render_block(b: &Block, flavor: Flavor, refs: &Refs, notes: &Notes) -> String {
+fn render_block(
+    b: &Block,
+    flavor: Flavor,
+    refs: &Refs,
+    notes: &Notes,
+    slugs: &mut Slugs,
+    heading_ids: bool,
+) -> String {
     match (b, flavor) {
         (Block::Heading(level, text), Flavor::Html) => {
-            format!(
-                "<h{level}>{}</h{level}>",
-                inline_ctx(text, flavor, refs, notes)
-            )
+            let inner = inline_ctx(text, flavor, refs, notes);
+            if heading_ids {
+                let anchor = slugs.next(&inline_ctx(text, Flavor::Text, refs, notes));
+                format!("<h{level} id=\"{anchor}\">{inner}</h{level}>")
+            } else {
+                format!("<h{level}>{inner}</h{level}>")
+            }
         }
         (Block::Heading(_, text), Flavor::Text) => inline_ctx(text, flavor, refs, notes),
         (Block::Paragraph(text), Flavor::Html) => {
@@ -683,14 +942,14 @@ fn render_block(b: &Block, flavor: Flavor, refs: &Refs, notes: &Notes) -> String
         (Block::Quote(inner), Flavor::Html) => {
             let inside: Vec<String> = inner
                 .iter()
-                .map(|x| render_block(x, flavor, refs, notes))
+                .map(|x| render_block(x, flavor, refs, notes, slugs, heading_ids))
                 .collect();
             format!("<blockquote>\n{}\n</blockquote>", inside.join("\n"))
         }
         (Block::Quote(inner), Flavor::Text) => {
             let inside: Vec<String> = inner
                 .iter()
-                .map(|x| render_block(x, flavor, refs, notes))
+                .map(|x| render_block(x, flavor, refs, notes, slugs, heading_ids))
                 .collect();
             inside
                 .join("\n\n")
@@ -719,7 +978,7 @@ fn render_block(b: &Block, flavor: Flavor, refs: &Refs, notes: &Notes) -> String
                             .enumerate()
                             .map(|(i, block)| match (i, task) {
                                 (0, Some((_, rest))) => inline_ctx(rest, flavor, refs, notes),
-                                _ => render_block(block, flavor, refs, notes),
+                                _ => render_block(block, flavor, refs, notes, slugs, heading_ids),
                             })
                             .collect();
                         // Tight rendering: strip the single <p> wrap.
@@ -751,7 +1010,7 @@ fn render_block(b: &Block, flavor: Flavor, refs: &Refs, notes: &Notes) -> String
                             .enumerate()
                             .map(|(i, block)| match (i, task) {
                                 (0, Some((_, rest))) => inline_ctx(rest, flavor, refs, notes),
-                                _ => render_block(block, flavor, refs, notes),
+                                _ => render_block(block, flavor, refs, notes, slugs, heading_ids),
                             })
                             .collect();
                         out.push_str(&marker);
@@ -1206,6 +1465,30 @@ mod tests {
 
     fn html(md: &str) -> String {
         convert_markdown(md, Flavor::Html).unwrap()
+    }
+
+    #[test]
+    fn normalize_rewrites_blocks_canonically() {
+        let messy = "#  Title\n\n* one\n* two\n\n3. three\n7. seven\n\n\
+                     |a|b|\n|:--|--:|\n|1|2|\n\n>   quoted\n\n---\n\n\
+                     Text [ref].\n\n[ref]: https://example.com \"T\"\n";
+        let canonical = "# Title\n\n- one\n- two\n\n1. three\n2. seven\n\n\
+                         | a | b |\n| :--- | ---: |\n| 1 | 2 |\n\n> quoted\n\n---\n\n\
+                         Text [ref].\n\n[ref]: https://example.com \"T\"\n";
+        let once = normalize(messy).unwrap();
+        assert_eq!(once, canonical);
+        // Structure only: a second pass changes nothing.
+        assert_eq!(normalize(&once).unwrap(), once);
+    }
+
+    #[test]
+    fn normalize_keeps_footnotes_at_the_end() {
+        let input = "Claim[^a].\n\n[^a]: the note\n    continued here\n\n# After\n";
+        let out = normalize(input).unwrap();
+        assert_eq!(
+            out,
+            "Claim[^a].\n\n# After\n\n[^a]: the note continued here\n"
+        );
     }
 
     #[test]
