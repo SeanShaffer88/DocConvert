@@ -14,50 +14,12 @@ on:
 jobs:
   gate:
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
-      # TEMPORARY: CI output is pushed back to the branch because the
-      # log archive host is unreachable from the agent sandbox.
-      - name: clippy
-        shell: pwsh
-        run: |
-          $out = cargo clippy --all-targets -- -D warnings 2>&1 | Out-String
-          $code = $LASTEXITCODE
-          Write-Host $out
-          if ($code -ne 0) {
-            $lines = $out -split "`n"
-            $emitted = 0
-            for ($i = 0; $i -lt $lines.Length -and $emitted -lt 10; $i++) {
-              if ($lines[$i] -match '^(error|warning)(\[|:)') {
-                $slice = $lines[$i..([Math]::Min($i + 4, $lines.Length - 1))] -join ' | '
-                $slice = $slice.Replace('%', '%25').Replace("`r", ' ').Replace("`n", ' ')
-                if ($slice.Length -gt 900) { $slice = $slice.Substring(0, 900) }
-                Write-Host "::error title=clippy::$slice"
-                $emitted++
-              }
-            }
-            exit 1
-          }
-      - name: test
-        shell: pwsh
-        run: |
-          $out = cargo test --locked 2>&1 | Out-String
-          $code = $LASTEXITCODE
-          Write-Host $out
-          if ($code -ne 0) {
-            $lines = $out -split "`n" | Where-Object { $_.Trim().Length -gt 0 }
-            $tail = $lines | Select-Object -Last 12
-            foreach ($line in $tail) {
-              $text = $line.Replace('%', '%25').Replace("`r", ' ')
-              if ($text.Length -gt 900) { $text = $text.Substring(0, 900) }
-              Write-Host "::error title=test::$text"
-            }
-            exit 1
-          }
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --locked
       - run: cargo build --release --locked
