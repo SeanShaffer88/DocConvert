@@ -602,8 +602,19 @@ fn normalize_inline(text: &str, marker: char) -> String {
                 // A span that crosses a line break keeps its shape too: the
                 // rewrite would join lines that block parsing treats
                 // separately, and the second pass would read the result as one
-                // paragraph (`"`\n]``>``"` lost its line break that way).
-                if !trimmed.is_empty() && !trimmed.contains('`') && !inner.contains('\n') {
+                // paragraph (`"`\n]``>``"` lost its line break that way). Nor
+                // is a span rewritten when a backtick run touches it: the new
+                // single tick would merge with that run and pair differently
+                // next time.
+                let before = i.checked_sub(1).map(|index| chars[index]);
+                let after = chars.get(close + run).copied();
+                let neighbour_tick = before == Some('`') || after == Some('`');
+                if !trimmed.is_empty()
+                    && !trimmed.contains('`')
+                    && !inner.contains('\n')
+                    && i > 0
+                    && !neighbour_tick
+                {
                     out.push('`');
                     out.push_str(trimmed);
                     out.push('`');
@@ -632,11 +643,16 @@ fn normalize_inline(text: &str, marker: char) -> String {
                     // and then `**<*>*`. Those spans stay as written.
                     let before = i.checked_sub(1).map(|index| chars[index]);
                     let after = chars.get(close + run).copied();
+                    // Emphasis whose text holds code, or that sits beside a
+                    // backtick, is left alone: the emitted marker would change
+                    // how backtick runs pair on the next pass (`_```_1`` ` came
+                    // back as `*``*1```).
                     let safe = [before, after].iter().all(|neighbour| {
                         *neighbour != Some(other)
                             && *neighbour != Some(marker)
                             && *neighbour != Some('`')
-                    }) && !inner.contains(marker);
+                    }) && !inner.contains(marker)
+                        && !inner.contains('`');
                     if ends_word && safe {
                         out.push_str(&marker.to_string().repeat(run));
                         out.push_str(&inner);
@@ -1951,9 +1967,12 @@ mod tests {
         // So is a span that crosses a line break.
         let once = normalize("`\n]``>``").unwrap();
         assert_eq!(once, normalize(&once).unwrap(), "{once:?}");
-        // And an emphasis rewrite never lands beside a backtick.
-        let once = normalize("_``_``\n").unwrap();
-        assert_eq!(once, normalize(&once).unwrap(), "{once:?}");
+        // And an emphasis rewrite never lands beside a backtick, or around
+        // code.
+        for text in ["_``_``\n", "_```_1``", "``x````y``"] {
+            let once = normalize(text).unwrap();
+            assert_eq!(once, normalize(&once).unwrap(), "{text:?} → {once:?}");
+        }
     }
 
     /// Alignment is part of the fixed point: `:---` and `---` mean the same
