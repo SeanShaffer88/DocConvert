@@ -4,6 +4,27 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.10.2] — 2026-11-25
+
+### Added
+
+- **The product icon, compiled in.** `docconvert.exe`,
+  `docconvert-mcp.exe` and `docconvert.dll` now carry the document mark
+  as a Windows `RT_GROUP_ICON`/`RT_ICON` resource, so Explorer, the
+  taskbar and Alt-Tab show it instead of the generic console glyph. The
+  `.ico` holds 16, 24, 32, 48, 64 (BMP) and 256 (PNG) variants.
+- `build_support/win_icon.rs` writes that resource itself: an `.ico` is
+  turned into a `.rsrc` section and wrapped in a COFF object that the
+  linker takes as an ordinary input — no `rc.exe` lookup, no
+  `embed-resource`-style dependency, nothing to install on the runner.
+  Non-Windows targets skip it entirely.
+- `tests/windows_icon.rs` parses the section back from the PE/COFF
+  specification — type table, name tables, language tables, data
+  entries, relocations, symbol table — and asserts every image arrives
+  byte for byte, so a wrong offset fails on Linux before a Windows
+  linker sees it.
+- The release zip carries `docconvert.ico` as well, for shortcuts.
+
 ## [0.10.1] — 2026-11-25
 
 ### Added
