@@ -502,7 +502,7 @@ mod tests {
         );
         // Prose is not a table, exactly as md→csv insists.
         let error = convert("just prose\n", "md", "json").expect_err("prose");
-        assert_eq!(error.0, ERR_CORRUPT, "{error:?}");
+        assert_eq!(error.0, crate::ERR_CORRUPT, "{error:?}");
         // A heading may introduce the table, as in the other table pairs.
         let json =
             convert("# Totals\n\n| a |\n| --- |\n| 2 |\n", "md", "json").expect("with heading");

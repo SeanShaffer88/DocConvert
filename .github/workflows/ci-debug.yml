@@ -16,4 +16,11 @@ jobs:
           cargo clippy --all-targets --message-format=short -- -D warnings > out.txt 2>&1
           code=$?
           grep -n "error" out.txt | head -30 | while IFS= read -r line; do echo "::error::$line"; done
+      - name: test
+        shell: bash
+        run: |
+          set +e
+          cargo test --locked > t.txt 2>&1
+          code=$?
+          grep -n "panicked at" -A 14 t.txt | head -160 | while IFS= read -r line; do echo "::error::$line"; done
           exit $code
