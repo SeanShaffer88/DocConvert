@@ -17,4 +17,12 @@ jobs:
           code=$?
           grep -n "error" out.txt | head -40 | while IFS= read -r line; do echo "::error::$line"; done
           head -40 out.txt | while IFS= read -r line; do echo "::error::H $line"; done
+      - name: test
+        shell: bash
+        run: |
+          set +e
+          cargo test --locked > t.txt 2>&1
+          code=$?
+          grep -n "panicked at" -A 12 t.txt | head -120 | while IFS= read -r line; do echo "::error::$line"; done
+          grep -n "^failures:" -A 40 t.txt | head -60 | while IFS= read -r line; do echo "::error::F $line"; done
           exit $code
