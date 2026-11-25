@@ -14,6 +14,7 @@ jobs:
       - name: test
         shell: bash
         run: |
+          set +e
           cargo test --locked > t.txt 2>&1
           code=$?
           python tools/report.py t.txt > report.md || true
