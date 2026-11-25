@@ -261,6 +261,19 @@ pub extern "C" fn dc_matrix_json() -> *mut c_char {
     finish_str(guard(|| Ok(convert::matrix_json())))
 }
 
+/// `dc_toc_json(input, from_format)` — the headings of a Markdown or
+/// HTML document as `[{"level":2,"text":"…","anchor":"…"}]`, the same
+/// anchors `{"heading_ids":true}` writes into Markdown→HTML output.
+#[no_mangle]
+pub extern "C" fn dc_toc_json(input: *const c_char, from_format: *const c_char) -> *mut c_char {
+    finish_str(guard(|| {
+        let input = req_str(input, "input")?;
+        let from = req_str(from_format, "from_format")?;
+        let entries = crate::toc::entries(&input, &from)?;
+        Ok(crate::toc::to_json(&entries))
+    }))
+}
+
 /// The YAML front matter of a Markdown document as a JSON object
 /// (`{}` when there is none or it is malformed). Mirrors
 /// `dc_convert_opts`'s `front_matter` handling without converting.
@@ -308,6 +321,35 @@ mod tests {
             s.contains("\"markdown\",\"to\":\"html\"") || s.contains("\"from\":\"markdown\""),
             "{s}"
         );
+    }
+
+    #[test]
+    fn ffi_toc_json_reports_headings() {
+        let p = dc_toc_json(
+            cs("# Guide\n\n## Install & run\n").as_ptr(),
+            cs("md").as_ptr(),
+        );
+        assert_eq!(
+            take(p),
+            "[{\"level\":1,\"text\":\"Guide\",\"anchor\":\"guide\"},\
+             {\"level\":2,\"text\":\"Install & run\",\"anchor\":\"install-run\"}]"
+        );
+
+        // HTML keeps the ids the document already has.
+        let html = dc_toc_json(
+            cs("<h2 id=\"custom\">Setup</h2><h3>Usage</h3>").as_ptr(),
+            cs("html").as_ptr(),
+        );
+        assert!(take(html).contains("\"anchor\":\"custom\""));
+
+        // A source without headings is a not-supported error, not silence.
+        let bad = dc_toc_json(cs("a,b\n1,2\n").as_ptr(), cs("csv").as_ptr());
+        assert!(bad.is_null());
+        assert_eq!(dc_last_error_code(), crate::ERR_NOT_SUPPORTED);
+
+        let null_input = dc_toc_json(std::ptr::null(), cs("md").as_ptr());
+        assert!(null_input.is_null());
+        assert_eq!(dc_last_error_code(), crate::ERR_INVALID_ARG);
     }
 
     /// Own and free a returned string, failing loudly with the

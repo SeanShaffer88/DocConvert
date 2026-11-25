@@ -393,6 +393,44 @@ fn render_blocks_md(nodes: &[Node], out: &mut String, depth: usize) {
     }
 }
 
+/// The `<h1>`…`<h6>` headings of a page, in document order: level,
+/// plain text, and the `id` it already carries (if any).
+pub fn headings(input: &str) -> CResult<Vec<(usize, String, Option<String>)>> {
+    let nodes = parse_html(input)?;
+    let mut out = Vec::new();
+    collect_headings(&nodes, &mut out);
+    Ok(out)
+}
+
+fn collect_headings(nodes: &[Node], out: &mut Vec<(usize, String, Option<String>)>) {
+    for node in nodes {
+        if let Node::Elem {
+            name,
+            attrs,
+            children,
+        } = node
+        {
+            let level = match name.as_str() {
+                "h1" => Some(1),
+                "h2" => Some(2),
+                "h3" => Some(3),
+                "h4" => Some(4),
+                "h5" => Some(5),
+                "h6" => Some(6),
+                _ => None,
+            };
+            if let Some(level) = level {
+                out.push((
+                    level,
+                    inline_text(children),
+                    attr(attrs, "id").map(|id| id.to_string()),
+                ));
+            }
+            collect_headings(children, out);
+        }
+    }
+}
+
 /// `<section class="footnotes">` — the block DocConvert itself emits for
 /// Markdown footnotes, and what other renderers emit too.
 fn is_footnotes_section(attrs: &[(String, String)]) -> bool {

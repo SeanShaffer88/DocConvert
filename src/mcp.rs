@@ -38,6 +38,8 @@ const TOOL_NAMES: &[&str] = &[
     "convert",
     "convert_file",
     "front_matter",
+    "toc",
+    "normalize",
     "formats",
     "matrix",
     "capabilities",
@@ -47,8 +49,9 @@ const INSTRUCTIONS: &str =
     "DocConvert converts documents between markdown, html, csv, tsv, json and \
 text. Use `convert` for text you already hold and `convert_file` for paths on disk; pairs outside \
 `matrix` are not supported and fail loudly rather than degrading. `front_matter` reads YAML \
-metadata, and `capabilities` reports this build's formats, pairs, options and error codes in one \
-object.";
+metadata, `toc` builds a table of contents from a document's headings (anchors match the ids \
+`heading_ids` writes into Markdown->HTML output), `normalize` rewrites Markdown canonically, and \
+`capabilities` reports this build's formats, pairs, options and error codes in one object.";
 
 /// `tools/list` payload. Kept as literal JSON so it reads like the MCP
 /// documentation; `tools_payload_is_well_formed` parses it in tests.
@@ -93,6 +96,32 @@ const TOOLS: &str = r#"[
         "input": { "type": "string", "description": "Markdown text to inspect." },
         "path": { "type": "string", "description": "Markdown file to inspect." }
       },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "toc",
+    "description": "Table of contents for a Markdown or HTML document: the headings as nested links, as Markdown, HTML or JSON. Anchors match the ids `heading_ids` writes into Markdown->HTML output.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "input": { "type": "string", "description": "Document text to read headings from." },
+        "path": { "type": "string", "description": "File to read headings from (instead of \"input\")." },
+        "from": { "type": "string", "enum": ["markdown", "html"], "description": "Document format; inferred from the path extension when omitted, else markdown." },
+        "format": { "type": "string", "enum": ["markdown", "html", "json"], "description": "How to render the table of contents (default markdown)." }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "normalize",
+    "description": "Canonical Markdown: one blank line between blocks, # headings, - bullets, sequential ordered lists, GFM tables with alignment, definitions collected at the end. Inline prose is left as written.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "input": { "type": "string", "description": "Markdown text to normalize." }
+      },
+      "required": ["input"],
       "additionalProperties": false
     }
   },
@@ -284,6 +313,8 @@ fn run_tool(name: &str, arguments: &Json) -> CResult<String> {
         "convert" => tool_convert(arguments),
         "convert_file" => tool_convert_file(arguments),
         "front_matter" => tool_front_matter(arguments),
+        "toc" => tool_toc(arguments),
+        "normalize" => tool_normalize(arguments),
         "formats" => Ok(convert::formats_json()),
         "matrix" => Ok(convert::matrix_json()),
         "capabilities" => Ok(capabilities_json()),
@@ -350,10 +381,51 @@ fn tool_front_matter(arguments: &Json) -> CResult<String> {
     })
 }
 
+fn tool_toc(arguments: &Json) -> CResult<String> {
+    let from = match optional_string(arguments, "from")? {
+        Some(from) => from,
+        None => match optional_string(arguments, "path")? {
+            Some(path) => {
+                crate::convert::format_for_path(&path).unwrap_or_else(|| "markdown".to_string())
+            }
+            None => "markdown".to_string(),
+        },
+    };
+    let input = match optional_string(arguments, "input")? {
+        Some(input) => input,
+        None => {
+            let path = required_string(arguments, "path")?;
+            String::from_utf8(platform::read_file(&path)?)
+                .map_err(|_| (ERR_CORRUPT, format!("'{path}' is not valid UTF-8 text")))?
+        }
+    };
+    let format = match optional_string(arguments, "format")? {
+        Some(format) => format,
+        None => "markdown".to_string(),
+    };
+    crate::toc::render_from(&input, &from, &format)
+}
+
+fn tool_normalize(arguments: &Json) -> CResult<String> {
+    let input = required_string(arguments, "input")?;
+    crate::markdown::normalize(&input)
+}
+
 fn options_from(arguments: &Json) -> CResult<Options> {
     let mut options = Options::default();
     if let Some(mode) = optional_string(arguments, "front_matter")? {
         options.front_matter = FrontMatterMode::parse(&mode)?;
+    }
+    if let Some(flag) = field(arguments, "heading_ids") {
+        match flag {
+            Json::Bool(flag) => options.heading_ids = *flag,
+            _ => {
+                return Err((
+                    ERR_INVALID_ARG,
+                    "\"heading_ids\" must be true or false".into(),
+                ))
+            }
+        }
     }
     Ok(options)
 }
@@ -367,10 +439,16 @@ fn capabilities_json() -> String {
         ("tools", Json::Array(tools)),
         (
             "options",
-            object(vec![(
-                "front_matter",
-                Json::Array(vec![string("strip"), string("table")]),
-            )]),
+            object(vec![
+                (
+                    "front_matter",
+                    Json::Array(vec![string("strip"), string("table")]),
+                ),
+                (
+                    "heading_ids",
+                    Json::Array(vec![Json::Bool(true), Json::Bool(false)]),
+                ),
+            ]),
         ),
         ("formats", parsed_or(convert::formats_json())),
         ("matrix", parsed_or(convert::matrix_json())),

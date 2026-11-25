@@ -4,7 +4,7 @@ use crate::csv::{parse_csv, parse_tsv, write_csv, write_tsv};
 use crate::frontmatter;
 use crate::html::{html_rows, html_to_csv, html_to_markdown, html_to_text};
 use crate::json::{parse_json, Json};
-use crate::markdown::{convert_markdown, markdown_rows, Flavor};
+use crate::markdown::{convert_markdown, convert_markdown_with, markdown_rows, Flavor};
 use crate::{corrupt, CResult, ERR_INVALID_ARG, ERR_NOT_SUPPORTED};
 
 pub const FORMATS: &[&str] = &["markdown", "html", "csv", "tsv", "json", "text"];
@@ -99,6 +99,10 @@ impl FrontMatterMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Options {
     pub front_matter: FrontMatterMode,
+    /// Give Markdown→HTML headings GitHub-style `id="slug"` anchors, so
+    /// a table of contents can link to them. Off by default, because a
+    /// bare `<h2>` is the CommonMark output.
+    pub heading_ids: bool,
 }
 
 impl Options {
@@ -127,6 +131,17 @@ impl Options {
                         }
                     };
                     options.front_matter = FrontMatterMode::parse(&mode)?;
+                }
+                "heading_ids" => {
+                    options.heading_ids = match value {
+                        Json::Bool(flag) => flag,
+                        _ => {
+                            return Err((
+                                ERR_INVALID_ARG,
+                                "options.heading_ids must be true or false".to_string(),
+                            ))
+                        }
+                    };
                 }
                 other => {
                     return Err((
@@ -189,7 +204,11 @@ pub fn convert_with_options(
         };
     }
     match (from.as_str(), to.as_str()) {
-        ("markdown", "html") => convert_markdown(&markdown_body(input, options), Flavor::Html),
+        ("markdown", "html") => convert_markdown_with(
+            &markdown_body(input, options),
+            Flavor::Html,
+            options.heading_ids,
+        ),
         ("markdown", "text") => convert_markdown(&markdown_body(input, options), Flavor::Text),
         ("html", "markdown") => html_to_markdown(input),
         ("html", "text") => html_to_text(input),

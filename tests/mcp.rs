@@ -181,6 +181,8 @@ fn handshake_and_tool_list() {
             "convert",
             "convert_file",
             "front_matter",
+            "toc",
+            "normalize",
             "formats",
             "matrix",
             "capabilities"
@@ -307,6 +309,74 @@ fn failures_are_readable_tool_errors() {
     // The server survives all of that and still answers.
     let alive = session.request("ping", "{}");
     assert!(field(&alive, "result").is_some());
+}
+
+#[test]
+fn toc_and_normalize_tools() {
+    let mut session = Session::start();
+
+    let doc = "# Guide\n\n## Install\n\n### Windows\n\n## Run\n";
+    let markdown = session.call("toc", &format!("{{\"input\":\"{}\"}}", json_escape(doc)));
+    assert!(!is_error(&markdown), "{markdown:?}");
+    assert_eq!(
+        text_of(&markdown).trim_end(),
+        "- [Guide](#guide)\n  - [Install](#install)\n    - [Windows](#windows)\n  - [Run](#run)"
+    );
+
+    let json = session.call(
+        "toc",
+        &format!("{{\"input\":\"{}\",\"format\":\"json\"}}", json_escape(doc)),
+    );
+    match parse_json(&text_of(&json)).expect("toc JSON") {
+        Json::Array(items) => {
+            assert_eq!(items.len(), 4);
+            assert_eq!(field(&items[0], "anchor"), Some(&Json::Str("guide".into())));
+            assert_eq!(field(&items[2], "level"), Some(&Json::Num("3".into())));
+        }
+        other => panic!("toc json should be an array: {other:?}"),
+    }
+
+    // HTML input read from a file: existing ids survive.
+    let dir = scratch_dir("toc");
+    let page = dir.join("page.html");
+    std::fs::write(&page, "<h2 id=\"keep\">Setup</h2><h2>Usage</h2>\n").expect("write page");
+    let from_file = session.call(
+        "toc",
+        &format!(
+            "{{\"path\":\"{}\",\"format\":\"html\"}}",
+            json_escape(&as_str(&page))
+        ),
+    );
+    assert!(!is_error(&from_file), "{from_file:?}");
+    let markup = text_of(&from_file);
+    assert!(markup.contains("href=\"#keep\""), "{markup}");
+    assert!(markup.contains("href=\"#usage\""), "{markup}");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // Bad arguments stay inside the error envelope.
+    let missing = session.call("toc", "{}");
+    assert!(is_error(&missing), "{missing:?}");
+    assert!(text_of(&missing).contains("(code 1)"), "{missing:?}");
+
+    let refused = session.call("toc", "{\"input\":\"a,b\\n\",\"from\":\"csv\"}");
+    assert!(is_error(&refused), "{refused:?}");
+    assert!(text_of(&refused).contains("(code 2)"), "{refused:?}");
+
+    let normalized = session.call(
+        "normalize",
+        &format!(
+            "{{\"input\":\"{}\"}}",
+            json_escape("#   Notes\n\n*  one   \n* two\n\n3. first\n7. second\n")
+        ),
+    );
+    assert!(!is_error(&normalized), "{normalized:?}");
+    assert_eq!(
+        text_of(&normalized).trim_end(),
+        "# Notes\n\n- one\n- two\n\n1. first\n2. second"
+    );
+
+    let no_input = session.call("normalize", "{}");
+    assert!(is_error(&no_input), "{no_input:?}");
 }
 
 #[test]

@@ -1,5 +1,18 @@
 # DocConvert roadmap
 
+## Shipped in v0.8
+
+- **Table of contents generator** — the headings of a Markdown or HTML
+  document as nested links (`markdown`, `html` or `json`), anchored the
+  way GitHub does, and a `heading_ids` option so Markdown→HTML writes
+  those same `id`s onto its headings. Exposed as `docconvert toc`,
+  `dc_toc_json` and the `toc` MCP tool.
+- **Markdown→Markdown normalization** — canonical blocks (headings,
+  bullets, ordered numbers, tables with alignment, quotes, rules,
+  definitions last) with inline prose untouched, idempotent, as
+  `docconvert normalize` and the `normalize` MCP tool. Converting
+  markdown→markdown stays a byte-faithful identity.
+
 ## Shipped in v0.7
 
 - **TSV as a first-class format**: the CSV grammar with a tab for the
@@ -69,20 +82,18 @@
 
 ## Next
 
-- **Table of contents generator** for Markdown and HTML inputs —
-  headings as nested links, anchored the way the document's own
-  headings are.
-- **Markdown→Markdown normalization**: canonical formatting
-  (list markers, table alignment, emphasis style) so converted output
-  is diffable.
+- **reStructuredText (subset)** as a second portable-document source —
+  headings, lists, literal blocks and links — behind the same matrix
+  shape and the same heading/`toc` machinery.
+- **Emphasis and inline normalization** for `normalize`: the style axis
+  (`*`/`_`, code fences, line wrapping) that v0.8 deliberately left
+  alone, opt-in so structure stays the default.
+- **Streaming `convert_file`** for inputs too large to hold twice (the
+  string API stays the default and the ABI contract).
 
 ## Later
 
-- More formats behind the same matrix shape: AsciiDoc (subset),
-  reStructuredText (subset), OPML, and TSV as a first-class format
-  rather than a CSV alias.
-- Streaming API for very large files (the string API is whole-input
-  by design).
+- More formats behind the same matrix shape: AsciiDoc (subset), OPML.
 
 ## Non-goals
 

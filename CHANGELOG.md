@@ -4,6 +4,41 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.8.0] — 2026-11-25
+
+### Added
+
+- **Table of contents generator** (`toc`, `dc_toc_json`, the `toc` MCP
+  tool): the headings of a Markdown or HTML document as a nested
+  Markdown list, nested `<ul>`/`<li>` markup, or a JSON array of
+  `{level, text, anchor}`. Anchors follow GitHub — lowercase,
+  punctuation dropped, whitespace runs collapsed to `-`, repeats
+  numbered `-1`, `-2` — and HTML input keeps an `id` the document
+  already carries. Sources without headings (CSV, TSV, JSON, text) are
+  `NOT_SUPPORTED` rather than empty output.
+- **`heading_ids` option** (CLI `--heading-ids`): Markdown→HTML writes
+  `<h2 id="slug">` using the same anchors `toc` reports, so a generated
+  table of contents links to ids the conversion actually produced.
+  Off by default, so the CommonMark-shaped output is unchanged.
+- **Markdown→Markdown normalization** (CLI `normalize`, the
+  `normalize` MCP tool): canonical block structure — one blank line
+  between blocks, `#` headings, `-` bullets, sequential ordered
+  numbers, GFM tables with their alignment row, `> ` quotes, `---`
+  rules — with link and footnote definitions collected at the end.
+  Inline prose is left as written, and the pass is idempotent.
+- `markdown::headings`, `markdown::slugify`, `markdown::Slugs` and
+  `html::headings` are public: one anchor model shared by headings,
+  the TOC and the `heading_ids` output.
+
+### Changed
+
+- `convert::Options` gained `heading_ids` (JSON `true`/`false`, parsed
+  strictly — any other value is `INVALID_ARG`), and `capabilities`
+  lists it next to `front_matter`.
+- `markdown→markdown` stays a byte-faithful identity: normalizing is
+  opt-in, never a side effect of converting.
+- Version 0.8.0 across the crate, header, and release.
+
 ## [0.7.0] — 2026-11-25
 
 ### Added

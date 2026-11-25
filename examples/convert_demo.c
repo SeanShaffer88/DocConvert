@@ -43,6 +43,9 @@ int main(int argc, char **argv)
     /* The metadata is readable on its own, without converting. */
     print_or_report(dc_front_matter_json("---\ntitle: Demo\ndraft: false\n---\nBody\n"));
 
+    /* A table of contents uses the same anchors as heading ids. */
+    print_or_report(dc_toc_json("# Guide\n\n## Install\n\n## Run\n", "markdown"));
+
     /* An unsupported pair is an error, never a lossy guess. */
     char *unsupported = dc_convert(md, "markdown", "csv");
     if (unsupported == NULL) {
