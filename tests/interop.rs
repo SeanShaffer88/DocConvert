@@ -74,7 +74,11 @@ fn front_matter_and_reference_links() {
     // definitions are gone from the body.
     let back = docconvert::convert::convert(&html, "html", "markdown").unwrap();
     assert!(back.contains("# Release 2.0"), "{back}");
-    assert!(back.contains("](https://example.com/changelog)"), "{back}");
+    // Titles survive the trip back out as `dest "title"`.
+    assert!(
+        back.contains("](https://example.com/changelog \"Changelog\")"),
+        "{back}"
+    );
     assert!(!back.contains("[changelog]:"), "{back}");
 }
 
