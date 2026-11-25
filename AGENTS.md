@@ -76,7 +76,7 @@
   anywhere else; the TOC must keep pointing at the ids the conversion
   writes.
 - `toc` is a view over headings, not a matrix pair: sources without
-  headings are NOT_SUPPORTED. `convert::MATRIX` is 38 pairs;
+  headings are NOT_SUPPORTED. `convert::MATRIX` is 44 pairs;
   markdown→markdown remains a byte-faithful identity.
 - `markdown::normalize` re-renders blocks canonically and must stay
   idempotent: definitions go last, inline prose is left as written, and
@@ -90,11 +90,16 @@
 - `src/toc.rs` holds the TOC renderers (markdown / html / json) plus
   `depths`, which turns heading levels into nesting; the `<ul>`/`<li>`
   writer must stay balanced — the tests count tags for that reason.
-- The three document readers (`src/rst.rs`, `src/asciidoc.rs`,
-  `src/opml.rs`) all land as **Markdown** and are then rendered by the
-  Markdown renderers — that is why `rst → html` and `rst → markdown`
-  agree. Never render HTML or text straight out of a reader; add the
-  construct to the Markdown mapping instead.
+- The document readers (`src/rst.rs`, `src/asciidoc.rs`,
+  `src/docbook.rs`, `src/mediawiki.rs`, `src/opml.rs`) all land as
+  **Markdown** and are then rendered by the Markdown renderers — that is
+  why `rst → html` and `rst → markdown` agree. Never render HTML or text
+  straight out of a reader; add the construct to the Markdown mapping
+  instead. `docbook` is the only XML one that builds its own tree: it
+  caps nesting at 128 (`DC_ERR_CORRUPT`), decodes entities, and takes
+  CDATA verbatim. `mediawiki` is a line scanner: block-level tags only
+  count when they open the line (`A<br>B` is inline), and templates,
+  magic words and `Category:`/`File:` links are dropped on purpose.
 - OPML reads through `html::parse_html` (it is XML of the same shape;
   `Node` and `parse_html` are `pub(crate)` for that reason) and writes
   attributes through `opml::escape_attr`. A document's outline is its

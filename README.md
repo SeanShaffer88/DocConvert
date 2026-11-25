@@ -3,7 +3,8 @@
 <img src="assets/docconvert.png" width="96" alt="DocConvert icon">
 
 Document conversion between **Markdown, HTML, CSV, TSV, JSON, plain
-text, reStructuredText, AsciiDoc, and OPML** behind one clean C ABI —
+text, reStructuredText, AsciiDoc, DocBook, MediaWiki, and OPML** behind
+one clean C ABI —
 pure Rust, zero dependencies, every parser hand-written. Library #16 in the Windows DLL Collection. The
 same matrix also ships as a CLI and as an MCP server for local AI
 clients.
@@ -248,10 +249,11 @@ where it can**: `markdown → json` is the same first-table extraction
 
 **Document syntaxes** are read into Markdown and rendered by the
 Markdown renderers, so `rst → html` and `rst → markdown` can never
-disagree: `rst → markdown|html|text` and `asciidoc → markdown|html|text`.
+disagree: `rst`, `asciidoc`, `docbook` and `mediawiki` each go to
+`markdown|html|text`.
 **OPML** goes both ways — `opml → markdown|html|text` (an outline as
 nested bullets, `_note` kept as the item's text) plus `markdown → opml`
-and `html → opml` (a document's headings as the outline). 38 pairs in
+and `html → opml` (a document's headings as the outline). 44 pairs in
 all.
 
 `convert::MATRIX` is the single source of truth: `dc_matrix_json()` is
@@ -308,6 +310,27 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   `2+|` spans columns, `.2+|` spans rows, `a|`/`h|`/`l|` style prefixes
   are dropped, cells may wrap across lines, and `[cols="1,2"]` fixes the
   column count.
+- **DocBook**: an XML tree walker over the sectioning elements (`book`,
+  `article`, `part`, `chapter`, `section`, `sect1`–`sect5`, `preface`,
+  `appendix`, `glossary`, …), `title` as the heading, `para`, listings
+  (`programlisting`, `screen`, `literallayout`, `synopsis`) as fenced
+  code with their `language`, itemized/ordered/variable lists, CALS and
+  `tr`/`td` tables, `blockquote`/`epigraph`, the five admonitions,
+  figures (their captions), `footnote` as a GFM footnote, and the inline
+  set — `emphasis` (and `role="bold"`), `strong`/`bold`, the
+  `literal`/`code`/`filename`/`command`/`option`/… family as code spans,
+  `link`/`ulink`/`uri`/`email`/`xref`. Comments, processing
+  instructions, the doctype (internal subset included) and the metadata
+  containers are dropped; entities are decoded and CDATA is verbatim.
+  Deep nesting is `DC_ERR_CORRUPT` rather than a stack overflow.
+- **MediaWiki**: `== Heading ==` sections, `''italic''`/`'''bold'''`,
+  internal and external links, `*`/`#` lists with any nesting,
+  definition lists, `{| … |}` tables (captions, `!` headers, `|-` rows,
+  `||`/`!!` on one line), preformatted text and `<source lang="…">`
+  blocks, `<ref>` footnotes, `----` rules, and the inline
+  `<code>`/`<nowiki>`/`<sup>`/`<br>` tags. Templates, magic words,
+  signatures and `Category:`/`File:` links are dropped — they name
+  things that live in the wiki, not in the document.
 - **OPML**: nested `<outline text="..." _note="...">`, read with the
   HTML reader (OPML is XML of the same shape) and written with escaped
   attributes. The outline of a document is its headings.
@@ -376,7 +399,9 @@ carries no headings (CSV, JSON, text) is `NOT_SUPPORTED`. `normalize`
 covers block structure, canonical inline markup (emphasis in the chosen
 marker, code spans without surplus backticks or padding) and the fence
 character; line breaks inside a paragraph are preserved because they are
-editorial. rST and AsciiDoc are subsets: their tables are flattened into
+editorial. rST, AsciiDoc, DocBook and MediaWiki are subsets, and each
+drops only what its language puts outside the document itself (templates,
+indexing elements, wiki-category links): their tables are flattened into
 GFM, so a cell that spans columns or rows keeps its text where the span
 starts and the covered cells are left empty, a wrapped cell is joined with
 single spaces, and column widths are advisory (GFM tables have none).

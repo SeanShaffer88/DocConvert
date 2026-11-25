@@ -4,6 +4,52 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.13.0] — 2026-11-25
+
+### Added
+
+- **DocBook as a source.** `docbook → markdown|html|text`, read by a
+  small XML tree walker: the sectioning elements (`book`, `article`,
+  `part`, `chapter`, `section`, `sect1`–`sect5`, `preface`, `appendix`,
+  `glossary`, …), `title` as the heading, `para`, listings
+  (`programlisting`, `screen`, `literallayout`, `synopsis`) as fenced
+  code with their `language`, itemized/ordered/`variablelist` lists,
+  CALS and `tr`/`td` tables, `blockquote`/`epigraph`, the five
+  admonitions, figure captions, `footnote` as a GFM footnote, and the
+  inline set — `emphasis` (and `role="bold"`), `strong`/`bold`, the
+  `literal`/`code`/`filename`/`command`/`option`/… family as code spans,
+  `link`/`ulink`/`uri`/`email`/`xref`. Comments, processing instructions
+  and the doctype (internal subset included) are dropped, entities are
+  decoded and CDATA is taken verbatim.
+- **MediaWiki as a source.** `mediawiki → markdown|html|text`:
+  `== Heading ==` sections, `''italic''`/`'''bold'''`/`'''''both'''''`,
+  internal and external links, `*`/`#` lists with any nesting and mixed
+  markers, definition lists (`;term: definition` and the two-line form),
+  `{| … |}` tables with `|+` captions, `!` header rows and `|-` rows,
+  preformatted text and `<source lang="…">` / `<syntaxhighlight>`
+  blocks, `<ref>` footnotes, `----` rules, and the inline
+  `<code>`/`<tt>`/`<kbd>`/`<nowiki>`/`<sup>`/`<br>` tags. Templates,
+  magic words, signatures, `<gallery>`/`<math>` and
+  `Category:`/`File:`/`Image:` links are dropped — they name things that
+  live in the wiki, not in the document.
+- **`toc` reads both**, so a DocBook or MediaWiki document's table of
+  contents uses the same anchors the conversions write.
+- Aliases and extensions: `docbook`/`dbk`/`docbook5` (`.dbk`,
+  `.docbook`), `mediawiki`/`wiki`/`mw` (`.wiki`).
+
+### Changed
+
+- The matrix is **44 pairs**; `matrix_is_exact` converts every listed
+  pair and refuses every unlisted one, and the seeded fuzz sweep drives
+  the new readers too.
+
+### Notes
+
+- Full AsciiDoc — the one item the roadmap still carried — is now listed
+  as a non-goal in `ROADMAP.md`: it resolves `include::`, evaluates
+  conditionals and substitutes attributes against a build environment, so
+  it is a preprocessor rather than a reader. The subset reader stays.
+
 ## [0.12.0] — 2026-11-25
 
 ### Added
