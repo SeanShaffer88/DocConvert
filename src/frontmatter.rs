@@ -44,7 +44,7 @@ impl FrontMatter {
 }
 
 fn table_cell(s: &str) -> String {
-    s.replace('|', "\\|").replace('\r', " ").replace('\n', " ")
+    s.replace('|', "\\|").replace(['\r', '\n'], " ")
 }
 
 fn scalar_text(v: &Json) -> String {
@@ -70,18 +70,14 @@ pub fn split(input: &str) -> (Option<FrontMatter>, &str) {
         Some(line) => line,
         None => return (None, input),
     };
-    if first
-        .trim_end_matches(|c| c == '\r' || c == '\n')
-        .trim_end()
-        != "---"
-    {
+    if first.trim_end_matches(['\r', '\n']).trim_end() != "---" {
         return (None, input);
     }
     let mut yaml = String::new();
     let mut consumed = first.len();
     let mut closed = false;
     for line in lines {
-        let content = line.trim_end_matches(|c| c == '\r' || c == '\n');
+        let content = line.trim_end_matches(['\r', '\n']);
         consumed += line.len();
         let fence = content.trim_end();
         if fence == "---" || fence == "..." {
