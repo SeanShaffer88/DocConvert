@@ -1215,24 +1215,34 @@ fn list_marker(line: &str) -> Option<(bool, usize, usize)> {
     match chars.next()? {
         '-' | '*' | '+' => {
             let after = &rest[1..];
-            if after.starts_with(' ') || after.is_empty() {
-                Some((false, indent, 2))
-            } else {
-                None
-            }
+            marker_space(after).map(|width| (false, indent, 1 + width))
         }
         c if c.is_ascii_digit() => {
             let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
             let after = &rest[digits.len()..];
-            if (after.starts_with('.') || after.starts_with(')'))
-                && (after.len() == 1 || after[1..].starts_with(' '))
-            {
-                Some((true, indent, digits.len() + 2))
-            } else {
-                None
+            if !(after.starts_with('.') || after.starts_with(')')) {
+                return None;
             }
+            marker_space(&after[1..]).map(|width| (true, indent, digits.len() + 1 + width))
         }
         _ => None,
+    }
+}
+
+/// How much room a list marker takes after itself, by CommonMark: one space,
+/// or as many spaces as are written up to four. Five or more mean the item
+/// starts with indented code, one space past the marker. Reading the width as
+/// always one left the extra spaces in the item's text, and a second
+/// normalization pass took them away again (`"\u{a0}  -  ["` did that).
+fn marker_space(after: &str) -> Option<usize> {
+    if after.is_empty() || after.starts_with('\t') {
+        return Some(1);
+    }
+    let spaces = after.chars().take_while(|c| *c == ' ').count();
+    match spaces {
+        0 => None,
+        1..=4 => Some(spaces),
+        _ => Some(1),
     }
 }
 
@@ -2027,6 +2037,22 @@ mod tests {
             let once = normalize(text).unwrap();
             assert_eq!(once, normalize(&once).unwrap(), "{text:?} → {once:?}");
         }
+    }
+
+    /// The spaces after a list marker are structure, not text.
+    #[test]
+    fn list_marker_width_follows_commonmark() {
+        assert_eq!(normalize("-  x\n").unwrap(), "- x\n");
+        assert_eq!(
+            normalize("-     code\n").unwrap(),
+            "- ```
+  code
+  ```
+"
+        );
+        assert_eq!(normalize("1)   x\n").unwrap(), "1. x\n");
+        let once = normalize("\u{a0}  -  [").expect("normalize");
+        assert_eq!(once, normalize(&once).expect("normalize twice"), "{once:?}");
     }
 
     /// A blank line inside an item does not end it when the next line is
