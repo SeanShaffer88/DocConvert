@@ -49,9 +49,19 @@
   reaches the inline renderer through `Notes`, which `render_block`
   and `inline_ctx` thread everywhere. `inline_with_refs` stays the
   public entry point and passes an empty `Notes`.
-- Both single-table extractors (`html_to_csv`, `html_to_json`) and
-  `markdown_to_csv` refuse documents without exactly one table; never
-  let them guess rows out of prose.
+- Tables go through one row model: `parse_csv`/`parse_tsv` and
+  `html::html_rows` / `markdown::markdown_rows` produce rows, and
+  `rows_to_json`, `rows_to_markdown_table`, `rows_to_html_table`,
+  `write_csv` and `write_tsv` render them. Add a format by adding a
+  reader or writer there, never by re-parsing a string in convert.rs.
+  TSV is the CSV grammar with a tab delimiter — cells containing a tab
+  are quoted.
+- The table extractors refuse documents without exactly one table;
+  never let them guess rows out of prose.
+- html→markdown rebuilds footnotes from the shape DocConvert emits
+  (`<sup><a href="#fn-1">` and `<section class="footnotes">`);
+  `note_text` drops the `#fnref-…` back-links so they are not carried
+  into the Markdown.
 - Markdown link titles are parsed once, by `split_destination` /
   `parse_title` in `src/markdown.rs`, and rendered as an escaped
   `title="…"`; `md_title` in `src/html.rs` writes them back. Task

@@ -138,3 +138,32 @@ fn titles_and_task_lists_round_trip() {
     assert!(back.contains("- [x] shipped"), "{back}");
     assert!(back.contains("- [ ] pending"), "{back}");
 }
+
+/// Footnotes survive markdown→html→markdown: references come back as
+/// `[^n]` and the section as definitions.
+#[test]
+fn footnotes_round_trip() {
+    let md = "Text with a note[^a].\n\n[^a]: The note itself.\n";
+    let html = docconvert::convert::convert(md, "markdown", "html").unwrap();
+    assert!(
+        html.contains("<sup><a href=\"#fn-1\" id=\"fnref-1\">1</a></sup>"),
+        "{html}"
+    );
+    assert!(html.contains("<section class=\"footnotes\">"), "{html}");
+
+    let back = docconvert::convert::convert(&html, "html", "markdown").unwrap();
+    assert!(back.contains("Text with a note[^1]."), "{back}");
+    assert!(back.contains("[^1]: The note itself."), "{back}");
+}
+
+/// TSV travels the whole matrix like CSV does.
+#[test]
+fn tsv_across_the_matrix() {
+    let tsv = "name\tqty\r\nMilk\t2\r\n";
+    let json = docconvert::convert::convert(tsv, "tsv", "json").unwrap();
+    assert!(json.contains("\"name\": \"Milk\""), "{json}");
+    let md = docconvert::convert::convert(tsv, "tsv", "markdown").unwrap();
+    assert!(md.starts_with("| name | qty |"), "{md}");
+    let html = docconvert::convert::convert(&md, "markdown", "tsv").unwrap();
+    assert_eq!(html, tsv);
+}

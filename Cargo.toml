@@ -1,10 +1,10 @@
 [package]
 name = "docconvert"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.80"
 authors = ["Sean Shaffer"]
-description = "Document conversion behind one clean C ABI, a scriptable CLI, and an MCP server — Markdown, HTML, CSV, JSON, plain text"
+description = "Document conversion behind one clean C ABI, a scriptable CLI, and an MCP server — Markdown, HTML, CSV, TSV, JSON, plain text"
 license = "MIT"
 repository = "https://github.com/SeanShaffer88/DocConvert"
 keywords = ["windows", "ffi"]

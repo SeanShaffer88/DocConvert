@@ -4,6 +4,32 @@ All notable changes to DocConvert are recorded here. The format
 follows Keep a Changelog, and the project adheres to Semantic
 Versioning for the C ABI (`dc_*` symbols, error codes).
 
+## [0.7.0] — 2026-11-25
+
+### Added
+
+- **TSV as a first-class format** (previously an alias of CSV): the
+  RFC 4180 grammar with a tab for the comma, so a cell containing a tab
+  is quoted and stays lossless. `tsv`, `tab` and `.tsv` are recognized,
+  and **TSV mirrors CSV everywhere** — csv↔tsv, tsv→json, json→tsv,
+  tsv→markdown, tsv→html, tsv→text, html→tsv, markdown→tsv — bringing
+  the matrix to 25 pairs.
+- One row model behind it: `parse_csv`/`parse_tsv`,
+  `html::html_rows` and `markdown::markdown_rows` feed
+  `rows_to_json` / `rows_to_markdown_table` / `rows_to_html_table` and
+  the two writers, so CSV, TSV and JSON table conversions cannot drift
+  apart.
+- **Footnote back-references in html→markdown**: a `<sup>` wrapping an
+  `#fn-…` anchor becomes `[^n]`, and a `<section class="footnotes">`
+  block (the one DocConvert emits, or anyone else's in the same shape)
+  becomes `[^n]: note` definitions with the back-link dropped — so a
+  Markdown document with footnotes now round-trips through HTML.
+
+### Changed
+
+- `html→csv` error text now names all three table targets.
+- Version 0.7.0 across the crate, header, and release.
+
 ## [0.6.0] — 2026-11-25
 
 ### Added

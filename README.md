@@ -1,7 +1,7 @@
 # DocConvert
 
-Document conversion between **Markdown, HTML, CSV, JSON, and plain
-text** behind one clean C ABI — pure Rust, zero dependencies, every
+Document conversion between **Markdown, HTML, CSV, TSV, JSON, and
+plain text** behind one clean C ABI — pure Rust, zero dependencies, every
 parser hand-written. Library #16 in the Windows DLL Collection. The
 same matrix also ships as a CLI and as an MCP server for local AI
 clients.
@@ -117,15 +117,19 @@ or `""` means defaults. Unknown keys and values are
 The metadata is never lost either way: `dc_front_matter_json` returns
 it as a JSON object regardless of how the document is converted.
 
-## The matrix (v0.6)
+## The matrix (v0.7)
 
-markdown→html, markdown→text, markdown→csv (a document that is one
-table), html→markdown, html→text, html→csv, html→json (both lift the
-first `<table>`), text→html, text→markdown, csv→json, json→csv,
-csv→markdown (table), csv→html (table), csv→text,
-json→text/html/markdown (pretty-printed, fenced for Markdown), plus
-identity conversions that validate and normalize (JSON pretty-prints,
-CSV re-quotes canonically).
+markdown→html, markdown→text, markdown→csv and markdown→tsv (a document
+that is one table), html→markdown, html→text, html→csv, html→tsv,
+html→json (the first `<table>`), text→html, text→markdown, csv→json,
+tsv→json, json→csv, json→tsv, csv↔tsv, csv→markdown (table),
+tsv→markdown (table), csv→html (table), tsv→html (table), csv→text,
+tsv→text, json→text/html/markdown (pretty-printed, fenced for
+Markdown), plus identity conversions that validate and normalize (JSON
+pretty-prints, CSV and TSV re-quote canonically).
+
+**TSV mirrors CSV everywhere**: wherever CSV is a source or a target,
+TSV is too — same rows, tab as the delimiter.
 
 `convert::MATRIX` is the single source of truth: `dc_matrix_json()` is
 generated from it, and `matrix_is_exact` asserts that every listed
@@ -158,10 +162,12 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   `colspan`/`rowspan` are not expanded), and **html→json** turns that
   same table into an array of objects. A page with no table is
   `DC_ERR_CORRUPT`, not an empty file.
-- **CSV**: RFC 4180 quoting in both directions (embedded commas,
-  quotes, newlines). CSV→JSON infers numbers/booleans/null — with
-  one deliberate exception: leading-zero values like `007` stay
-  strings, because they're codes, not quantities.
+- **CSV / TSV**: RFC 4180 quoting in both directions, the delimiter
+  (`,` or tab) being the only difference — embedded separators, quotes
+  and newlines stay inside the cell, so TSV stays lossless even when a
+  value itself contains a tab. CSV/TSV→JSON infers numbers, booleans
+  and null — with one deliberate exception: leading-zero values like
+  `007` stay strings, because they're codes, not quantities.
 - **JSON**: full parser (key order preserved, numbers kept as
   source text so nothing loses precision, surrogate pairs handled)
   and compact/pretty serializers.
@@ -184,14 +190,16 @@ pair converts and every unlisted one is `NOT_SUPPORTED`.
   target) with `-D warnings`, full suite — green. Pure logic, no
   Win32 calls.
 
-## Scope limits (v0.6)
+## Scope limits (v0.7)
 
-Markdown: no HTML pass-through; footnotes are one-way (html→markdown
-drops the `<sup>` block); link titles reach the HTML output (and come
-back through html→markdown) but are dropped from the plain-text
-flavor, which keeps the label and URL only. markdown→csv insists on a
-document that is one table (plus at most one heading) — prose is an
-error, not a guess.
+Markdown: no HTML pass-through; link titles reach the HTML output (and
+come back through html→markdown) but are dropped from the plain-text
+flavor, which keeps the label and URL only. markdown→csv/tsv insist on
+a document that is one table (plus at most one heading) — prose is an
+error, not a guess. Footnotes round-trip through the
+`<section class="footnotes">` block DocConvert emits; a page that
+numbers footnotes some other way still converts, just without the
+`[^n]` markers.
 HTML: expects roughly well-formed input (no tag-soup repair
 heuristics); html→csv uses the first table only and ignores spans.
 CSV→JSON always uses the first row as headers. See ROADMAP.md.

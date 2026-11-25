@@ -1,5 +1,15 @@
 # DocConvert roadmap
 
+## Shipped in v0.7
+
+- **TSV as a first-class format**: the CSV grammar with a tab for the
+  comma (cells containing a tab are quoted, so nothing is lost), and
+  the rule that wherever CSV is a source or target, TSV is too — nine
+  new pairs, 25 in total.
+- **Footnote back-references in html→markdown**: `<sup>` + `#fn-…`
+  becomes `[^n]`, and a `<section class="footnotes">` block becomes
+  `[^n]: note` definitions, so footnotes survive the round trip.
+
 ## Shipped in v0.6
 
 - **Footnotes** — the last common GFM construct: `[^label]` references
@@ -59,11 +69,12 @@
 
 ## Next
 
-- **TSV** as a first-class format (tab-separated, same quoting
-  rules), promoted from the Later list because it is the cheapest next
-  pair to add.
-- **Footnote back-references in html→markdown**, so the round trip
-  stops dropping `<sup>` blocks.
+- **Table of contents generator** for Markdown and HTML inputs —
+  headings as nested links, anchored the way the document's own
+  headings are.
+- **Markdown→Markdown normalization**: canonical formatting
+  (list markers, table alignment, emphasis style) so converted output
+  is diffable.
 
 ## Later
 
@@ -72,8 +83,6 @@
   rather than a CSV alias.
 - Streaming API for very large files (the string API is whole-input
   by design).
-- Markdown→Markdown normalization (canonical formatting), and a
-  table-of-contents generator for Markdown/HTML inputs.
 
 ## Non-goals
 

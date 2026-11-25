@@ -35,7 +35,8 @@ CONVERT FLAGS
   -o, --output <path>     output file ('-' or omitted = stdout)
       --front-matter <m>  strip (default) or table
       --options <json>    options object, e.g. {"front_matter":"table"}
-  Flags also take --flag=value. Aliases: md, mkd, htm, xhtml, txt, plain.
+  Flags also take --flag=value. Aliases: md, mkd, htm, xhtml, tsv, tab,
+  txt, plain.
 
 EXAMPLES
   docconvert convert -f md -t html README.md README.html
