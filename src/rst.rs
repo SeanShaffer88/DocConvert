@@ -400,7 +400,7 @@ fn simple_table(lines: &[&str]) -> Option<(String, usize)> {
         let cells = split_simple_row(line, &spans);
         // A row whose stub column is empty continues the row above it: that
         // is how a simple table wraps a cell over several lines.
-        let continuation = cells.first().is_none_or(|stub| stub.is_empty());
+        let continuation = cells.first().map_or(true, |stub| stub.is_empty());
         if continuation && !rows.is_empty() {
             if let Some(previous) = rows.last_mut() {
                 for (index, cell) in cells.iter().enumerate().skip(1) {

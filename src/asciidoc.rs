@@ -458,8 +458,8 @@ fn layout_cells(cells: Vec<Cell>, columns: usize) -> Vec<Vec<String>> {
         }
         let colspan = cell.colspan.min(columns - column);
         rows[row][column] = collapse(&cell.text);
-        for covered in column + 1..column + colspan {
-            rows[row][covered].clear();
+        for covered in rows[row].iter_mut().skip(column + 1).take(colspan - 1) {
+            covered.clear();
         }
         for extra in 1..cell.rowspan.max(1) {
             ensure(&mut rows, &mut reserved, row + extra, columns);
