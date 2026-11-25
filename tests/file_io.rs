@@ -128,10 +128,13 @@ fn options_and_errors() {
         .into_owned();
     assert!(message.contains("nope.md"), "{message}");
 
-    // An unsupported pair fails loudly and writes nothing.
-    let out = dir.join("post.json");
+    // An unsupported pair fails loudly and writes nothing. (Plain text
+    // has no table to become, so text → csv is still not in the matrix.)
+    let plain = dir.join("note.txt");
+    std::fs::write(&plain, "just prose\n").unwrap();
+    let out = dir.join("post.csv");
     let code = dc_convert_file(
-        path(&md).as_ptr(),
+        path(&plain).as_ptr(),
         path(&out).as_ptr(),
         std::ptr::null(),
         std::ptr::null(),
