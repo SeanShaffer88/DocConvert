@@ -27,6 +27,9 @@ while index < len(lines) and len(picked) < 120:
             index += 12
             continue
     index += 1
+
+# Long lines (a generated document, say) would swamp the report.
+picked = [line if len(line) <= 240 else line[:240] + " …" for line in picked]
 body = "\n".join(picked) or text[-4000:]
 print("```text")
 print(body[:14000])
