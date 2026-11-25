@@ -1,13 +1,13 @@
 //! Format registry + the conversion matrix.
 
-use crate::csv::{parse_csv, write_csv};
+use crate::csv::{parse_csv, parse_tsv, write_csv, write_tsv};
 use crate::frontmatter;
-use crate::html::{html_to_csv, html_to_markdown, html_to_text};
+use crate::html::{html_rows, html_to_csv, html_to_markdown, html_to_text};
 use crate::json::{parse_json, Json};
-use crate::markdown::{convert_markdown, markdown_to_csv, Flavor};
+use crate::markdown::{convert_markdown, markdown_rows, Flavor};
 use crate::{corrupt, CResult, ERR_INVALID_ARG, ERR_NOT_SUPPORTED};
 
-pub const FORMATS: &[&str] = &["markdown", "html", "csv", "json", "text"];
+pub const FORMATS: &[&str] = &["markdown", "html", "csv", "tsv", "json", "text"];
 
 /// Every `{from, to}` pair this version supports. `dc_matrix_json()`
 /// is generated from this table and `matrix_is_exact` asserts that
@@ -28,6 +28,15 @@ pub const MATRIX: &[(&str, &str)] = &[
     ("csv", "markdown"),
     ("csv", "html"),
     ("csv", "text"),
+    ("csv", "tsv"),
+    ("tsv", "csv"),
+    ("tsv", "json"),
+    ("tsv", "markdown"),
+    ("tsv", "html"),
+    ("tsv", "text"),
+    ("json", "tsv"),
+    ("html", "tsv"),
+    ("markdown", "tsv"),
     ("json", "text"),
     ("json", "html"),
     ("json", "markdown"),
@@ -135,13 +144,14 @@ pub fn normalize_format(name: &str) -> CResult<String> {
     let f = match name.trim().to_lowercase().as_str() {
         "markdown" | "md" | "mkd" => "markdown",
         "html" | "htm" | "xhtml" => "html",
-        "csv" | "tsv" => "csv",
+        "csv" => "csv",
+        "tsv" | "tab" => "tsv",
         "json" => "json",
         "text" | "txt" | "plain" => "text",
         other => {
             return Err((
                 ERR_INVALID_ARG,
-                format!("unknown format '{other}' (known: markdown, html, csv, json, text)"),
+                format!("unknown format '{other}' (known: markdown, html, csv, tsv, json, text)"),
             ))
         }
     };
@@ -174,6 +184,7 @@ pub fn convert_with_options(
         return match from.as_str() {
             "json" => Ok(parse_json(input)?.to_pretty()),
             "csv" => Ok(write_csv(&parse_csv(input)?)),
+            "tsv" => Ok(write_tsv(&parse_tsv(input)?)),
             _ => Ok(input.to_string()),
         };
     }
@@ -183,15 +194,24 @@ pub fn convert_with_options(
         ("html", "markdown") => html_to_markdown(input),
         ("html", "text") => html_to_text(input),
         ("html", "csv") => html_to_csv(input),
-        ("html", "json") => html_to_json(input),
-        ("markdown", "csv") => markdown_to_csv(&markdown_body(input, options)),
+        ("html", "json") => Ok(rows_to_json(&html_rows(input)?)),
+        ("html", "tsv") => Ok(write_tsv(&html_rows(input)?)),
+        ("markdown", "csv") => Ok(write_csv(&markdown_rows(&markdown_body(input, options))?)),
+        ("markdown", "tsv") => Ok(write_tsv(&markdown_rows(&markdown_body(input, options))?)),
         ("text", "html") => Ok(text_to_html(input)),
         ("text", "markdown") => Ok(input.trim_end().to_string() + "\n"),
-        ("csv", "json") => csv_to_json(input),
-        ("json", "csv") => json_to_csv(input),
-        ("csv", "markdown") => csv_to_markdown_table(input),
-        ("csv", "html") => csv_to_html_table(input),
+        ("csv", "json") => Ok(rows_to_json(&parse_csv(input)?)),
+        ("tsv", "json") => Ok(rows_to_json(&parse_tsv(input)?)),
+        ("json", "csv") => Ok(write_csv(&json_rows(input)?)),
+        ("json", "tsv") => Ok(write_tsv(&json_rows(input)?)),
+        ("csv", "markdown") => Ok(rows_to_markdown_table(&parse_csv(input)?)),
+        ("tsv", "markdown") => Ok(rows_to_markdown_table(&parse_tsv(input)?)),
+        ("csv", "html") => Ok(rows_to_html_table(&parse_csv(input)?)),
+        ("tsv", "html") => Ok(rows_to_html_table(&parse_tsv(input)?)),
         ("csv", "text") => Ok(write_csv(&parse_csv(input)?)),
+        ("tsv", "text") => Ok(write_tsv(&parse_tsv(input)?)),
+        ("csv", "tsv") => Ok(write_tsv(&parse_csv(input)?)),
+        ("tsv", "csv") => Ok(write_csv(&parse_tsv(input)?)),
         ("json", "text") => Ok(parse_json(input)?.to_pretty()),
         ("json", "html") => Ok(format!(
             "<pre>{}</pre>",
@@ -224,14 +244,6 @@ fn markdown_body(input: &str, options: &Options) -> String {
     }
 }
 
-/// html→json: the first table as an array of objects. It reuses
-/// html→csv's extraction and csv→json's typing, so the siblings agree
-/// cell for cell.
-fn html_to_json(input: &str) -> CResult<String> {
-    let csv = html_to_csv(input)?;
-    csv_to_json(&csv)
-}
-
 fn text_to_html(input: &str) -> String {
     let mut out = String::new();
     for para in input.split("\n\n") {
@@ -247,10 +259,12 @@ fn text_to_html(input: &str) -> String {
     out
 }
 
-fn csv_to_json(input: &str) -> CResult<String> {
-    let rows = parse_csv(input)?;
+/// A table as an array of objects: the first row is the header, cells
+/// become JSON scalars (numbers, booleans, nulls; leading-zero codes
+/// stay strings).
+fn rows_to_json(rows: &[Vec<String>]) -> String {
     if rows.is_empty() {
-        return Ok("[]".to_string());
+        return "[]".to_string();
     }
     let headers = &rows[0];
     let mut objects = Vec::new();
@@ -262,7 +276,7 @@ fn csv_to_json(input: &str) -> CResult<String> {
         }
         objects.push(Json::Object(obj));
     }
-    Ok(Json::Array(objects).to_pretty())
+    Json::Array(objects).to_pretty()
 }
 
 /// Numeric-looking cells become JSON numbers; "true"/"false" become
@@ -293,7 +307,9 @@ fn scalar_of(cell: &str) -> Json {
     Json::Str(cell.to_string())
 }
 
-fn json_to_csv(input: &str) -> CResult<String> {
+/// JSON (an array of objects, or a single object) as table rows with a
+/// union-of-keys header.
+fn json_rows(input: &str) -> CResult<Vec<Vec<String>>> {
     let value = parse_json(input)?;
     let items = match &value {
         Json::Array(items) => items.clone(),
@@ -305,7 +321,7 @@ fn json_to_csv(input: &str) -> CResult<String> {
         }
     };
     if items.is_empty() {
-        return Ok(String::new());
+        return Ok(Vec::new());
     }
     // Union of keys in first-seen order.
     let mut keys: Vec<String> = Vec::new();
@@ -338,13 +354,12 @@ fn json_to_csv(input: &str) -> CResult<String> {
             rows.push(row);
         }
     }
-    Ok(write_csv(&rows))
+    Ok(rows)
 }
 
-fn csv_to_markdown_table(input: &str) -> CResult<String> {
-    let rows = parse_csv(input)?;
+fn rows_to_markdown_table(rows: &[Vec<String>]) -> String {
     if rows.is_empty() {
-        return Ok(String::new());
+        return String::new();
     }
     let mut out = String::new();
     for (i, row) in rows.iter().enumerate() {
@@ -360,13 +375,12 @@ fn csv_to_markdown_table(input: &str) -> CResult<String> {
             out.push('\n');
         }
     }
-    Ok(out)
+    out
 }
 
-fn csv_to_html_table(input: &str) -> CResult<String> {
-    let rows = parse_csv(input)?;
+fn rows_to_html_table(rows: &[Vec<String>]) -> String {
     if rows.is_empty() {
-        return Ok("<table>\n</table>".to_string());
+        return "<table>\n</table>".to_string();
     }
     let mut out = String::from("<table>\n<thead>\n<tr>");
     for cell in &rows[0] {
@@ -381,7 +395,7 @@ fn csv_to_html_table(input: &str) -> CResult<String> {
         out.push_str("</tr>");
     }
     out.push_str("\n</tbody>\n</table>");
-    Ok(out)
+    out
 }
 
 #[cfg(test)]
@@ -432,6 +446,7 @@ mod tests {
                        <table><tr><th>A</th></tr><tr><td>1</td></tr></table>"
             }
             "csv" => "name,qty\nMilk,2\n",
+            "tsv" => "name\tqty\nMilk\t2\n",
             "json" => "{\"a\": [1, 2], \"b\": null}",
             _ => "plain text\n\nsecond paragraph\n",
         }
@@ -480,6 +495,45 @@ mod tests {
             convert("<p>nothing</p>", "html", "csv").unwrap_err().0,
             crate::ERR_CORRUPT
         );
+    }
+
+    /// TSV is first-class: wherever CSV is a source or target, TSV is
+    /// too, with the same rows underneath.
+    #[test]
+    fn tsv_mirrors_csv() {
+        let csv = "name,note\r\nMilk,\"2, l\"\r\n";
+        let tsv = convert(csv, "csv", "tsv").unwrap();
+        assert_eq!(tsv, "name\tnote\r\nMilk\t2, l\r\n");
+        assert_eq!(convert(&tsv, "tsv", "csv").unwrap(), csv);
+
+        let json = convert("a\tb\n1\t2\n", "tsv", "json").unwrap();
+        assert!(json.contains("\"a\": 1"), "{json}");
+        assert!(json.contains("\"b\": 2"), "{json}");
+        let back = convert("[{\"a\":1,\"b\":2}]", "json", "tsv").unwrap();
+        assert_eq!(back, "a\tb\r\n1\t2\r\n");
+
+        let table = convert("| A | B |\n|---|---|\n| 1 | 2 |\n", "markdown", "tsv").unwrap();
+        assert_eq!(table, "A\tB\r\n1\t2\r\n");
+        let html = convert(
+            "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>",
+            "html",
+            "tsv",
+        )
+        .unwrap();
+        assert_eq!(html, "A\tB\r\n1\t2\r\n");
+        assert!(convert("a\tb\n", "tsv", "html")
+            .unwrap()
+            .contains("<th>a</th>"));
+        assert_eq!(
+            convert("a\tb\n", "tsv", "markdown").unwrap(),
+            "| a | b |\n| --- | --- |\n"
+        );
+        // A tab inside a cell is quoted, so the row count survives.
+        let quoted = convert("h1\th2\r\nv\t\"a\tb\"\r\n", "tsv", "tsv").unwrap();
+        assert!(quoted.contains("\"a\tb\""), "{quoted}");
+        // TSV files are recognized by extension, and the alias works.
+        assert_eq!(format_for_path("data.tsv").as_deref(), Some("tsv"));
+        assert_eq!(normalize_format("tab").unwrap(), "tsv");
     }
 
     #[test]

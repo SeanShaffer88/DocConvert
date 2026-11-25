@@ -272,6 +272,20 @@ fn md_title(title: Option<&str>) -> String {
     }
 }
 
+/// The footnote a `<sup>` wraps, if it wraps an `#fn-…` anchor.
+fn footnote_label(children: &[Node]) -> Option<String> {
+    let first = children.first()?;
+    if let Node::Elem { name, attrs, .. } = first {
+        if name == "a" {
+            let label = attr(attrs, "href")?.strip_prefix("#fn-")?;
+            if !label.is_empty() {
+                return Some(label.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
     attrs
         .iter()
@@ -357,6 +371,9 @@ fn render_blocks_md(nodes: &[Node], out: &mut String, depth: usize) {
                     "table" => {
                         render_table_md(children, out);
                     }
+                    "section" if is_footnotes_section(attrs) => {
+                        render_footnotes_md(children, out);
+                    }
                     "div" | "section" | "article" | "main" | "header" | "footer" | "body"
                     | "html" | "figure" | "figcaption" => {
                         render_blocks_md(children, out, depth);
@@ -374,6 +391,59 @@ fn render_blocks_md(nodes: &[Node], out: &mut String, depth: usize) {
             }
         }
     }
+}
+
+/// `<section class="footnotes">` — the block DocConvert itself emits for
+/// Markdown footnotes, and what other renderers emit too.
+fn is_footnotes_section(attrs: &[(String, String)]) -> bool {
+    attr(attrs, "class")
+        .is_some_and(|class| class.split_whitespace().any(|word| word == "footnotes"))
+}
+
+/// Turn a footnotes section back into `[^label]: note` definitions.
+fn render_footnotes_md(nodes: &[Node], out: &mut String) {
+    for node in nodes {
+        if let Node::Elem {
+            name,
+            attrs,
+            children,
+        } = node
+        {
+            match name.as_str() {
+                "li" => {
+                    let label = attr(attrs, "id")
+                        .and_then(|id| id.strip_prefix("fn-"))
+                        .unwrap_or("");
+                    if !label.is_empty() {
+                        out.push_str(&format!("[^{label}]: {}\n\n", note_text(children)));
+                    }
+                }
+                "ol" | "ul" | "section" | "div" => render_footnotes_md(children, out),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// A note's Markdown text, minus the back-link that points at the
+/// reference (it is re-created by the renderer that reads this).
+fn note_text(nodes: &[Node]) -> String {
+    let mut out = String::new();
+    for node in nodes {
+        if let Node::Elem { name, attrs, .. } = node {
+            if name == "a" && attr(attrs, "href").is_some_and(|href| href.starts_with("#fnref-")) {
+                continue;
+            }
+            if name == "p" || name == "div" {
+                if let Node::Elem { children, .. } = node {
+                    out.push_str(&note_text(children));
+                }
+                continue;
+            }
+        }
+        out.push_str(&inline_md(std::slice::from_ref(node)));
+    }
+    out.trim().to_string()
 }
 
 fn render_list_md(items: &[Node], ordered: bool, out: &mut String, depth: usize) {
@@ -522,6 +592,14 @@ fn inline_md(nodes: &[Node]) -> String {
                     out.push_str(&raw_text(children));
                     out.push('`');
                 }
+                "sup" => {
+                    // `<sup><a href="#fn-1">1</a></sup>` is a footnote
+                    // reference; anything else superscripts as usual.
+                    match footnote_label(children) {
+                        Some(label) => out.push_str(&format!("[^{label}]")),
+                        None => out.push_str(&inline_md(children)),
+                    }
+                }
                 "a" => {
                     let href = attr(attrs, "href").unwrap_or("");
                     let text = inline_md(children);
@@ -571,15 +649,21 @@ fn raw_text(nodes: &[Node]) -> String {
 /// expanded — a spanned cell occupies its own column. Documents
 /// without a table are `DC_ERR_CORRUPT`, never an empty file.
 pub fn html_to_csv(input: &str) -> CResult<String> {
+    Ok(crate::csv::write_csv(&html_rows(input)?))
+}
+
+/// The first `<table>` in the page as rows — the one extraction that
+/// html→csv, html→tsv and html→json all share.
+pub fn html_rows(input: &str) -> CResult<Vec<Vec<String>>> {
     let nodes = parse_html(input)?;
     let rows = match first_table(&nodes) {
         Some(table) => table_rows(table),
         None => Vec::new(),
     };
     if rows.iter().all(|row| row.is_empty()) {
-        return Err(corrupt("html→csv: no <table> with rows found"));
+        return Err(corrupt("html→csv/tsv/json: no <table> with rows found"));
     }
-    Ok(crate::csv::write_csv(&rows))
+    Ok(rows)
 }
 
 fn first_table(nodes: &[Node]) -> Option<&[Node]> {
@@ -793,6 +877,24 @@ mod tests {
         assert!(md.contains("- plain"), "{md}");
         assert!(md.contains("[docs](https://e.com \"Docs\")"), "{md}");
         assert!(md.contains("![logo](l.png \"Logo\")"), "{md}");
+    }
+
+    /// The footnotes block DocConvert emits comes back as GFM.
+    #[test]
+    fn footnote_back_references() {
+        let html = "<p>Text<sup><a href=\"#fn-1\" id=\"fnref-1\">1</a></sup>.</p>\
+                    <section class=\"footnotes\">\
+                    <ol><li id=\"fn-1\"><p>The note. <a href=\"#fnref-1\">\u{21a9}</a></p></li></ol>\
+                    </section>";
+        let md = html_to_markdown(html).unwrap();
+        assert!(md.contains("Text[^1]."), "{md}");
+        assert!(md.contains("[^1]: The note."), "{md}");
+        // The back-link is not carried into the Markdown.
+        assert!(!md.contains("fnref-1"), "{md}");
+        // A `<sup>` that is not a footnote stays a superscript.
+        let md = html_to_markdown("<p>x<sup>2</sup></p>").unwrap();
+        assert!(md.contains("x2"), "{md}");
+        assert!(!md.contains("[^"), "{md}");
     }
 
     #[test]

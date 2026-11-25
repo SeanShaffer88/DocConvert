@@ -1,8 +1,8 @@
-/* DocConvert.dll v0.6.0 — document conversion behind one clean C ABI:
- * Markdown, HTML, CSV, JSON, and plain text. All strings UTF-8,
+/* DocConvert.dll v0.7.0 — document conversion behind one clean C ABI:
+ * Markdown, HTML, CSV, TSV, JSON, and plain text. All strings UTF-8,
  * NUL-terminated. char* results are caller-owned: free with
  * dc_free_string(). Format names: "markdown"/"md", "html",
- * "csv", "json", "text"/"txt". The supported conversion pairs are
+ * "csv", "tsv"/"tab", "json", "text"/"txt". The supported conversion pairs are
  * enumerable at runtime with dc_matrix_json().
  *
  * Options (dc_convert_opts / dc_convert_file_opts) are a JSON object;
@@ -49,7 +49,7 @@ DC_API const char *dc_last_error(void);
 DC_API int dc_last_error_code(void);
 DC_API void dc_free_string(char *p);
 
-DC_API char *dc_formats_json(void); /* ["markdown","html","csv","json","text"] */
+DC_API char *dc_formats_json(void); /* ["markdown","html","csv","tsv","json","text"] */
 DC_API char *dc_matrix_json(void);  /* [{"from":...,"to":...}, ...] */
 DC_API char *dc_convert(const char *input, const char *from_format, const char *to_format);
 DC_API char *dc_convert_opts(const char *input, const char *from_format,

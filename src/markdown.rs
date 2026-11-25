@@ -98,6 +98,11 @@ fn render_notes(notes: &Notes, flavor: Flavor, refs: &Refs) -> String {
 /// Prose (or no table at all) is an error rather than a guess: there
 /// would be no rows to speak of.
 pub fn markdown_to_csv(input: &str) -> CResult<String> {
+    Ok(crate::csv::write_csv(&markdown_rows(input)?))
+}
+
+/// The table rows behind markdown→csv and markdown→tsv.
+pub fn markdown_rows(input: &str) -> CResult<Vec<Vec<String>>> {
     let (refs, _note_texts, lines) = collect_definitions(input);
     let raw: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let blocks = parse_blocks(&raw);
@@ -129,7 +134,7 @@ pub fn markdown_to_csv(input: &str) -> CResult<String> {
         cells.resize(width, String::new());
         out.push(cells);
     }
-    Ok(crate::csv::write_csv(&out))
+    Ok(out)
 }
 
 /// Normalize a reference label the CommonMark way: trim, collapse

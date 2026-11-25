@@ -1,9 +1,20 @@
-//! CSV per RFC 4180: quoted fields, embedded commas/quotes/newlines,
-//! CRLF or LF endings. Writing quotes only when needed.
+//! CSV per RFC 4180 — quoted fields, embedded delimiters/quotes/
+//! newlines, CRLF or LF endings, quotes written only when needed — and
+//! TSV, which is the same grammar with a tab for the comma so that a
+//! cell containing a tab stays lossless.
 
 use crate::{corrupt, CResult};
 
 pub fn parse_csv(input: &str) -> CResult<Vec<Vec<String>>> {
+    parse_delimited(input, b',')
+}
+
+/// TSV: the RFC 4180 grammar with tab as the delimiter.
+pub fn parse_tsv(input: &str) -> CResult<Vec<Vec<String>>> {
+    parse_delimited(input, b'\t')
+}
+
+fn parse_delimited(input: &str, delim: u8) -> CResult<Vec<Vec<String>>> {
     let bytes = input.as_bytes();
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut row: Vec<String> = Vec::new();
@@ -41,7 +52,7 @@ pub fn parse_csv(input: &str) -> CResult<Vec<Vec<String>>> {
                     field_started = true;
                     i += 1;
                 }
-                b',' => {
+                b if b == delim => {
                     row.push(std::mem::take(&mut field));
                     field_started = false;
                     i += 1;
@@ -65,7 +76,8 @@ pub fn parse_csv(input: &str) -> CResult<Vec<Vec<String>>> {
         }
     }
     if in_quotes {
-        return Err(corrupt("csv: unterminated quoted field"));
+        let name = if delim == b'\t' { "tsv" } else { "csv" };
+        return Err(corrupt(format!("{name}: unterminated quoted field")));
     }
     // Trailing field/row when the file doesn't end with a newline.
     if field_started || !row.is_empty() || !field.is_empty() {
@@ -95,17 +107,26 @@ fn utf8_len(bytes: &[u8], i: usize) -> usize {
 }
 
 pub fn write_csv(rows: &[Vec<String>]) -> String {
+    write_delimited(rows, ',')
+}
+
+pub fn write_tsv(rows: &[Vec<String>]) -> String {
+    write_delimited(rows, '\t')
+}
+
+fn write_delimited(rows: &[Vec<String>], delim: char) -> String {
     let mut out = String::new();
+    let separator = delim.to_string();
     for row in rows {
-        let cells: Vec<String> = row.iter().map(|c| quote_cell(c)).collect();
-        out.push_str(&cells.join(","));
+        let cells: Vec<String> = row.iter().map(|c| quote_cell(c, delim)).collect();
+        out.push_str(&cells.join(&separator));
         out.push_str("\r\n");
     }
     out
 }
 
-fn quote_cell(cell: &str) -> String {
-    if cell.contains(',') || cell.contains('"') || cell.contains('\n') || cell.contains('\r') {
+fn quote_cell(cell: &str, delim: char) -> String {
+    if cell.contains(delim) || cell.contains('"') || cell.contains('\n') || cell.contains('\r') {
         format!("\"{}\"", cell.replace('"', "\"\""))
     } else {
         cell.to_string()
@@ -131,5 +152,23 @@ mod tests {
         let rows = parse_csv("a,b\n1,2").unwrap();
         assert_eq!(rows, vec![vec!["a", "b"], vec!["1", "2"]]);
         assert!(parse_csv("\"unterminated").is_err());
+    }
+    #[test]
+    fn tsv_roundtrip() {
+        let rows = vec![
+            vec!["name".to_string(), "note".to_string()],
+            vec!["Milk".to_string(), "2\tl".to_string()],
+        ];
+        let text = write_tsv(&rows);
+        // A tab inside a cell is quoted, so the row count survives.
+        assert_eq!(text, "name\tnote\r\nMilk\t\"2\tl\"\r\n");
+        assert_eq!(parse_tsv(&text).unwrap(), rows);
+        // Commas are ordinary text in TSV, and tabs are delimiters.
+        assert_eq!(write_tsv(&[vec!["a,b".to_string()]]), "a,b\r\n");
+        assert_eq!(parse_tsv("a\tb\r\n").unwrap(), vec![vec!["a", "b"]]);
+        assert_eq!(
+            parse_tsv("\"unterminated").unwrap_err().0,
+            crate::ERR_CORRUPT
+        );
     }
 }

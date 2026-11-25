@@ -43,7 +43,8 @@ const TOOL_NAMES: &[&str] = &[
     "capabilities",
 ];
 
-const INSTRUCTIONS: &str = "DocConvert converts documents between markdown, html, csv, json and \
+const INSTRUCTIONS: &str =
+    "DocConvert converts documents between markdown, html, csv, tsv, json and \
 text. Use `convert` for text you already hold and `convert_file` for paths on disk; pairs outside \
 `matrix` are not supported and fail loudly rather than degrading. `front_matter` reads YAML \
 metadata, and `capabilities` reports this build's formats, pairs, options and error codes in one \
@@ -54,13 +55,13 @@ object.";
 const TOOLS: &str = r#"[
   {
     "name": "convert",
-    "description": "Convert a document between Markdown, HTML, CSV, JSON and plain text and return the result. Unsupported pairs fail with a clear message instead of guessing.",
+    "description": "Convert a document between Markdown, HTML, CSV, TSV, JSON and plain text and return the result. Unsupported pairs fail with a clear message instead of guessing.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "input": { "type": "string", "description": "The document text to convert." },
-        "from": { "type": "string", "description": "Source format: markdown, html, csv, json or text (aliases md, mkd, htm, xhtml, txt, plain accepted)." },
-        "to": { "type": "string", "description": "Target format: markdown, html, csv, json or text." },
+        "from": { "type": "string", "description": "Source format: markdown, html, csv, tsv, json or text (aliases md, mkd, htm, xhtml, tab, txt, plain accepted)." },
+        "to": { "type": "string", "description": "Target format: markdown, html, csv, tsv, json or text." },
         "front_matter": { "type": "string", "enum": ["strip", "table"], "description": "What md->html and md->text do with a YAML front matter block: strip it (default) or render it as a key/value table." }
       },
       "required": ["input", "from", "to"],
