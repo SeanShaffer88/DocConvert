@@ -458,7 +458,15 @@ fn render_markdown_block(block: &Block, refs: &Refs, notes: &Notes, style: Style
         Block::Code(info, body) => {
             let text = body.trim_end_matches('\n');
             let fence = fence_for(text, style.fence);
-            format!("{fence}{}\n{text}\n{fence}", info.trim())
+            // An empty block is two lines, not three: the stray blank line
+            // between the fences was read back as a body line, and inside a
+            // list item the indented closing fence then became a block of its
+            // own — so the document grew every time it was normalized.
+            if text.is_empty() {
+                format!("{fence}{}\n{fence}", info.trim())
+            } else {
+                format!("{fence}{}\n{text}\n{fence}", info.trim())
+            }
         }
         Block::Quote(inner) => {
             let inner = render_markdown_blocks(inner, refs, notes, style);
@@ -1912,8 +1920,13 @@ mod tests {
         assert_eq!(once, "```\nx\n```\n");
         assert_eq!(once, normalize(&once).expect("normalize twice"));
         // A backtick fence's info string cannot hold a backtick, so this is
-        // an inline span, not a block.
-        assert!(normalize("```x```\n").unwrap().contains("```x```"));
+        // an inline span, not a block — and an inline span loses its surplus
+        // backticks.
+        assert_eq!(normalize("```x```\n").unwrap(), "`x`\n");
+        // An empty block stays two lines, which keeps it stable in a list.
+        assert_eq!(normalize("- ~~~\n").unwrap(), "- ```\n  ```\n");
+        let once = normalize("- ~~~\n").unwrap();
+        assert_eq!(once, normalize(&once).unwrap());
     }
 
     /// Alignment is part of the fixed point: `:---` and `---` mean the same
