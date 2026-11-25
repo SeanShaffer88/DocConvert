@@ -494,7 +494,7 @@ fn xref(rest: &str) -> Option<(usize, String)> {
     if label.is_empty() {
         return None;
     }
-    Some((close + 4, format!("[{label}]")));
+    Some((close + 4, format!("[{label}]")))
 }
 
 #[cfg(test)]
