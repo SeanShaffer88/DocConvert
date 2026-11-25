@@ -957,6 +957,55 @@ mod tests {
     }
 
     #[test]
+    fn reference_links() {
+        let md = "[docs]: https://example.com/docs \"Docs\"\n\
+                  [short]: <https://example.com/s> 'Short'\n\n\
+                  See [the docs][docs], [docs], [short][] and ![logo][docs].\n\n\
+                  An [undefined] ref stays literal.\n";
+        let out = html(md);
+        assert!(
+            out.contains("<a href=\"https://example.com/docs\">the docs</a>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<a href=\"https://example.com/docs\">docs</a>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<a href=\"https://example.com/s\">short</a>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<img src=\"https://example.com/docs\" alt=\"logo\">"),
+            "{out}"
+        );
+        assert!(out.contains("[undefined] ref stays literal"), "{out}");
+        // Labels normalize like CommonMark: trim, collapse, case-fold.
+        let out = html("[Big   Ref]: https://e.com\n\n[big ref]\n");
+        assert!(
+            out.contains("<a href=\"https://e.com\">big ref</a>"),
+            "{out}"
+        );
+        // Definitions inside fenced code stay code.
+        let out = html("[x]: https://e.com\n\n[x][]\n\n```\n[x]: https://not-a-def.com\n```\n");
+        assert!(out.contains("<a href=\"https://e.com\">x</a>"), "{out}");
+        assert!(out.contains("[x]: https://not-a-def.com"), "{out}");
+        // The text flavor keeps destinations visible.
+        let text = convert_markdown("[d]: https://e.com\n\nSee [d].\n", Flavor::Text).unwrap();
+        assert_eq!(text, "See d (https://e.com).\n");
+    }
+
+    /// Continuation lines indented with non-ASCII whitespace used to be
+    /// sliced at a raw byte column — a panic inside a UTF-8 character.
+    #[test]
+    fn unicode_indentation_is_safe() {
+        let out = html("- item\n\u{3000}continuation\n");
+        assert!(out.contains("continuation"), "{out}");
+        let out = html("\u{a0}1. one\n\u{a0}\u{a0}still one\n");
+        assert!(!out.is_empty(), "{out}");
+    }
+
+    #[test]
     fn text_flavor() {
         let out = convert_markdown(
             "# Hi\n\nSome **bold** text and [x](https://e.com).\n",
