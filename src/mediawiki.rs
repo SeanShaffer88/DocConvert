@@ -818,7 +818,7 @@ fn inline_tag(chars: &[char], at: usize, notes: &mut Notes) -> Option<(usize, St
                     number
                 }
             };
-            return Some((end + 5 - at, format!("[^{number}]")));
+            return Some((end + "</ref>".len() - at, format!("[^{number}]")));
         }
         "nowiki" => {
             let (text, end) = closing_body(chars, body_at, "nowiki")?;
@@ -930,32 +930,32 @@ fn entity(chars: &[char], at: usize) -> Option<(usize, char)> {
     Some((i + 1 - at, decoded))
 }
 
-/// The block-level opening tag on a line, if there is one.
+/// The block-level opening tag, when the line starts with one: a tag in
+/// the middle of a line (`A<br>B`) is inline, not a block.
 fn block_tag(trimmed: &str) -> Option<Tag> {
     let chars: Vec<char> = trimmed.chars().collect();
-    let mut i = 0usize;
-    while let Some(at) = find_char(&chars, '<', i) {
-        let (tag, _) = parse_tag(&chars, at)?;
-        let name = tag.name.as_str();
-        if matches!(
-            name,
-            "pre"
-                | "source"
-                | "syntaxhighlight"
-                | "poem"
-                | "nowiki"
-                | "gallery"
-                | "math"
-                | "timeline"
-                | "score"
-                | "chem"
-                | "references"
-                | "div"
-                | "table"
-        ) {
-            return Some(tag);
-        }
-        i = at + 1;
+    if chars.first() != Some(&'<') {
+        return None;
+    }
+    let (tag, _) = parse_tag(&chars, 0)?;
+    let name = tag.name.as_str();
+    if matches!(
+        name,
+        "pre"
+            | "source"
+            | "syntaxhighlight"
+            | "poem"
+            | "nowiki"
+            | "gallery"
+            | "math"
+            | "timeline"
+            | "score"
+            | "chem"
+            | "references"
+            | "div"
+            | "table"
+    ) {
+        return Some(tag);
     }
     None
 }
