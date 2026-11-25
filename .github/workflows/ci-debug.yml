@@ -1,5 +1,7 @@
 name: ci-debug
-on: workflow_dispatch
+on:
+  push:
+
 jobs:
   dbg:
     runs-on: windows-latest
