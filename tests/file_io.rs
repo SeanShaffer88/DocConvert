@@ -147,41 +147,35 @@ fn streaming_copies_identity_conversions_and_converts_the_rest() {
     std::fs::write(&source, &body).expect("write source");
 
     // markdown -> markdown is byte-faithful, so it streams.
-    let written = unsafe {
-        dc_convert_file_streaming(
-            path(&source).as_ptr(),
-            path(&copy).as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    };
+    let written = dc_convert_file_streaming(
+        path(&source).as_ptr(),
+        path(&copy).as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+    );
     assert_eq!(written, body.len() as i64);
     assert_eq!(std::fs::read_to_string(&copy).unwrap(), body);
 
     // Anything else converts through the whole-buffer path.
-    let written = unsafe {
-        dc_convert_file_streaming(
-            path(&source).as_ptr(),
-            path(&html).as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    };
+    let written = dc_convert_file_streaming(
+        path(&source).as_ptr(),
+        path(&html).as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+    );
     let out = std::fs::read_to_string(&html).unwrap();
     assert_eq!(written, out.len() as i64);
     assert!(out.starts_with("<h1>Title</h1>"), "{out}");
 
     // A missing input is the usual error code, not a crash.
     let missing = dir.join("nope.md");
-    let code = unsafe {
-        dc_convert_file_streaming(
-            path(&missing).as_ptr(),
-            path(&copy).as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    };
+    let code = dc_convert_file_streaming(
+        path(&missing).as_ptr(),
+        path(&copy).as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+    );
     assert_eq!(code, -1);
-    assert_eq!(unsafe { dc_last_error_code() }, ERR_NOT_FOUND);
+    assert_eq!(dc_last_error_code(), ERR_NOT_FOUND);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -476,6 +476,11 @@ fn macro_link(rest: &str) -> Option<(usize, String)> {
     let close = rest[open..].find(']')? + open;
     let target = rest[..open].trim();
     let label = rest[open + 1..close].trim();
+    // The target is a single token: anything with whitespace in it is
+    // prose that happens to precede a bracket.
+    if target.is_empty() || target.chars().any(char::is_whitespace) {
+        return None;
+    }
     let url = match target
         .strip_prefix("link:")
         .or_else(|| target.strip_prefix("xref:"))
