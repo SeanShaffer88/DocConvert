@@ -273,7 +273,8 @@ pub extern "C" fn dc_normalize(input: *const c_char, options_json: *const c_char
 
 /// `dc_convert_file_streaming(in, out, from, to)` — converts a file and
 /// returns the bytes written, streaming the identity conversions
-/// (markdown, html, text, rst, asciidoc, opml copy byte for byte) in
+/// (markdown, html, text, rst, asciidoc, docbook, mediawiki and opml copy
+/// byte for byte) in
 /// 64 KiB chunks instead of holding the document twice. Negative on
 /// error, with `dc_last_error()` set.
 #[no_mangle]

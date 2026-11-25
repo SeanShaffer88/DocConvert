@@ -1,4 +1,4 @@
-/* DocConvert.dll v0.12.0 — document conversion behind one clean C ABI:
+/* DocConvert.dll v0.13.0 — document conversion behind one clean C ABI:
  * Markdown, HTML, CSV, TSV, JSON, and plain text. All strings UTF-8,
  * NUL-terminated. char* results are caller-owned: free with
  * dc_free_string(). Format names: "markdown"/"md", "html",
@@ -67,8 +67,9 @@ DC_API int dc_convert_file(const char *in_path, const char *out_path,
  * {"emphasis":"asterisk|underscore"} and {"fence":"backtick|tilde"};
  * unknown keys are DC_ERR_INVALID_ARG. */
 DC_API char *dc_normalize(const char *input, const char *options_json);
-/* Streams an identity conversion (markdown, html, text, rst, asciidoc and
- * opml copy the input byte for byte) in 64 KiB chunks, and streams text,
+/* Streams an identity conversion (markdown, html, text, rst, asciidoc,
+ * docbook, mediawiki and opml copy the input byte for byte) in 64 KiB
+ * chunks, and streams text,
  * CSV/TSV and Markdown block by block; every other pair falls back to the
  * whole-buffer path. Returns the bytes written, or negative with
  * dc_last_error() set. */
