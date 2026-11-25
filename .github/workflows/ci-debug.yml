@@ -25,6 +25,7 @@ jobs:
       - name: note
         if: always()
         shell: bash
-        run: gh pr comment 17 --body "debug run finished: $(date -u)"
+        run: |
+          gh pr comment 17 --body "debug run finished"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
