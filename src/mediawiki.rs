@@ -359,7 +359,7 @@ fn render_list(lines: &[&str], notes: &mut Notes) -> (String, usize) {
 
 /// The body of a block-level tag that the reader handles line by line,
 /// from the opening tag to its partner.
-fn block_body<'a>(lines: &[&'a str], name: &str) -> (String, usize) {
+fn block_body(lines: &[&str], name: &str) -> (String, usize) {
     let closer = format!("</{name}>");
     let mut body: Vec<&str> = Vec::new();
     let mut i = 1usize;
@@ -825,9 +825,7 @@ fn inline_tag(chars: &[char], at: usize, notes: &mut Notes) -> Option<(usize, St
             return Some((end - at, text));
         }
         "code" | "tt" | "kbd" | "samp" | "var" | "output" => {
-            let Some((inner, end)) = closing_body(chars, body_at, &tag.name) else {
-                return None;
-            };
+            let (inner, end) = closing_body(chars, body_at, &tag.name)?;
             let text = inner.trim();
             if text.is_empty() {
                 return Some((end - at, String::new()));

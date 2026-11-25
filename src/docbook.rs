@@ -73,7 +73,7 @@ impl Element {
     }
 }
 
-fn attach(root: &mut Element, stack: &mut Vec<Element>, element: Element) {
+fn attach(root: &mut Element, stack: &mut [Element], element: Element) {
     let node = Node::Element(element);
     match stack.last_mut() {
         Some(parent) => parent.children.push(node),
@@ -81,7 +81,7 @@ fn attach(root: &mut Element, stack: &mut Vec<Element>, element: Element) {
     }
 }
 
-fn push_text(root: &mut Element, stack: &mut Vec<Element>, text: &str) {
+fn push_text(root: &mut Element, stack: &mut [Element], text: &str) {
     if text.is_empty() {
         return;
     }
