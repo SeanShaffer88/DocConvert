@@ -47,7 +47,7 @@ const TOOL_NAMES: &[&str] = &[
 
 const INSTRUCTIONS: &str =
     "DocConvert converts documents between markdown, html, csv, tsv, json, text, rst, \
-asciidoc and opml. Use `convert` for text you already hold and `convert_file` for paths on disk \
+asciidoc, docbook, mediawiki and opml. Use `convert` for text you already hold and `convert_file` for paths on disk \
 `matrix` are not supported and fail loudly rather than degrading. `front_matter` reads YAML \
 metadata, `toc` builds a table of contents from a document's headings (anchors match the ids \
 `heading_ids` writes into Markdown->HTML output), `normalize` rewrites Markdown canonically, and \
@@ -63,8 +63,8 @@ const TOOLS: &str = r#"[
       "type": "object",
       "properties": {
         "input": { "type": "string", "description": "The document text to convert." },
-        "from": { "type": "string", "description": "Source format: markdown, html, csv, tsv, json, text, rst, asciidoc or opml (aliases md, mkd, htm, xhtml, tab, txt, plain, rest, adoc accepted)." },
-        "to": { "type": "string", "description": "Target format: markdown, html, csv, tsv, json, text, rst, asciidoc or opml." },
+        "from": { "type": "string", "description": "Source format: markdown, html, csv, tsv, json, text, rst, asciidoc, docbook, mediawiki or opml (aliases md, mkd, htm, xhtml, tab, txt, plain, rest, adoc, dbk, wiki, mw accepted)." },
+        "to": { "type": "string", "description": "Target format: markdown, html, csv, tsv, json, text, rst, asciidoc, docbook, mediawiki or opml." },
         "front_matter": { "type": "string", "enum": ["strip", "table"], "description": "What md->html and md->text do with a YAML front matter block: strip it (default) or render it as a key/value table." },
         "heading_ids": { "type": "boolean", "description": "Give markdown->html headings GitHub-style id=\"slug\" anchors (default false)." }
       },
@@ -110,7 +110,7 @@ const TOOLS: &str = r#"[
       "properties": {
         "input": { "type": "string", "description": "Document text to read headings from." },
         "path": { "type": "string", "description": "File to read headings from (instead of \"input\")." },
-        "from": { "type": "string", "enum": ["markdown", "html", "rst", "asciidoc"], "description": "Document format; inferred from the path extension when omitted, else markdown." },
+        "from": { "type": "string", "enum": ["markdown", "html", "rst", "asciidoc", "docbook", "mediawiki"], "description": "Document format; inferred from the path extension when omitted, else markdown." },
         "format": { "type": "string", "enum": ["markdown", "html", "json"], "description": "How to render the table of contents (default markdown)." }
       },
       "additionalProperties": false

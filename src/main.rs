@@ -41,7 +41,8 @@ CONVERT FLAGS
       --stream        copy identity conversions in chunks (files only)
   Flags also take --flag=value. A flag wins over the same key in
   --options, whatever order the two appear in. Aliases: md, mkd, htm,
-  xhtml, tsv, tab, txt, plain, rst, rest, adoc, asciidoc, opml.
+  xhtml, tsv, tab, txt, plain, rst, rest, adoc, asciidoc, dbk, docbook,
+  docbook5, wiki, mediawiki, mw, opml.
 
 NORMALIZE FLAGS
       --emphasis <s>      asterisk (default) or underscore

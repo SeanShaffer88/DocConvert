@@ -170,6 +170,10 @@ const PAIRS: &[(&str, &str)] = &[
     ("rst", "html"),
     ("asciidoc", "markdown"),
     ("asciidoc", "html"),
+    ("docbook", "markdown"),
+    ("docbook", "html"),
+    ("mediawiki", "markdown"),
+    ("mediawiki", "html"),
 ];
 
 /// How long one conversion may take before the sweep calls it a hang.

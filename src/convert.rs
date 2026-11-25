@@ -8,7 +8,17 @@ use crate::markdown::{convert_markdown, convert_markdown_with, markdown_rows, Fl
 use crate::{corrupt, CResult, ERR_INVALID_ARG, ERR_NOT_SUPPORTED};
 
 pub const FORMATS: &[&str] = &[
-    "markdown", "html", "csv", "tsv", "json", "text", "rst", "asciidoc", "opml",
+    "markdown",
+    "html",
+    "csv",
+    "tsv",
+    "json",
+    "text",
+    "rst",
+    "asciidoc",
+    "docbook",
+    "mediawiki",
+    "opml",
 ];
 
 /// Every `{from, to}` pair this version supports. `dc_matrix_json()`
@@ -54,6 +64,12 @@ pub const MATRIX: &[(&str, &str)] = &[
     ("opml", "markdown"),
     ("opml", "html"),
     ("opml", "text"),
+    ("docbook", "markdown"),
+    ("docbook", "html"),
+    ("docbook", "text"),
+    ("mediawiki", "markdown"),
+    ("mediawiki", "html"),
+    ("mediawiki", "text"),
     ("markdown", "opml"),
     ("html", "opml"),
 ];
@@ -181,13 +197,15 @@ pub fn normalize_format(name: &str) -> CResult<String> {
         "text" | "txt" | "plain" => "text",
         "rst" | "rest" | "restructuredtext" => "rst",
         "asciidoc" | "adoc" | "ascii" => "asciidoc",
+        "docbook" | "dbk" | "docbook5" => "docbook",
+        "mediawiki" | "wiki" | "mw" => "mediawiki",
         "opml" => "opml",
         other => {
             return Err((
                 ERR_INVALID_ARG,
                 format!(
                     "unknown format '{other}' (known: markdown, html, csv, tsv, json, text, \
-                     rst, asciidoc, opml)"
+                     rst, asciidoc, docbook, mediawiki, opml)"
                 ),
             ))
         }
@@ -283,6 +301,22 @@ pub fn convert_with_options(
         ("asciidoc", "text") => {
             convert_markdown(&crate::asciidoc::to_markdown(input)?, Flavor::Text)
         }
+        ("docbook", "markdown") => crate::docbook::to_markdown(input),
+        ("docbook", "html") => convert_markdown_with(
+            &crate::docbook::to_markdown(input)?,
+            Flavor::Html,
+            options.heading_ids,
+        ),
+        ("docbook", "text") => convert_markdown(&crate::docbook::to_markdown(input)?, Flavor::Text),
+        ("mediawiki", "markdown") => crate::mediawiki::to_markdown(input),
+        ("mediawiki", "html") => convert_markdown_with(
+            &crate::mediawiki::to_markdown(input)?,
+            Flavor::Html,
+            options.heading_ids,
+        ),
+        ("mediawiki", "text") => {
+            convert_markdown(&crate::mediawiki::to_markdown(input)?, Flavor::Text)
+        }
         ("opml", "markdown") => crate::opml::to_markdown(input),
         ("opml", "html") => convert_markdown_with(
             &crate::opml::to_markdown(input)?,
@@ -309,7 +343,16 @@ pub fn convert_with_options(
 
 /// The identity conversions whose output is the input byte for byte —
 /// the ones a streaming copy can serve without parsing anything.
-pub(crate) const BYTE_FAITHFUL: &[&str] = &["markdown", "html", "text", "rst", "asciidoc", "opml"];
+pub(crate) const BYTE_FAITHFUL: &[&str] = &[
+    "markdown",
+    "html",
+    "text",
+    "rst",
+    "asciidoc",
+    "docbook",
+    "mediawiki",
+    "opml",
+];
 
 /// `dc_convert_file_streaming`: a file conversion that streams where it
 /// can — identity copies, text paragraphs, CSV/TSV records and Markdown
@@ -557,6 +600,11 @@ mod tests {
             "json" => "{\"a\": [1, 2], \"b\": null}",
             "rst" => "Title\n=====\n\nPart\n----\n\n* one\n* two\n",
             "asciidoc" => "= Title\n\n== Part\n\n* one\n* two\n",
+            "docbook" => {
+                "<book><title>Title</title><chapter><title>Part</title>\
+                          <para>One</para><para>Two</para></chapter></book>"
+            }
+            "mediawiki" => "== Title ==\n\nPart\n\n* one\n* two\n",
             "opml" => {
                 "<?xml version=\"1.0\"?><opml version=\"2.0\"><body>\
                  <outline text=\"One\"><outline text=\"Two\"/></outline></body></opml>"
@@ -645,6 +693,10 @@ mod tests {
         // Aliases and extensions line up.
         assert_eq!(normalize_format("rest").unwrap(), "rst");
         assert_eq!(normalize_format("adoc").unwrap(), "asciidoc");
+        assert_eq!(normalize_format("dbk").unwrap(), "docbook");
+        assert_eq!(normalize_format("wiki").unwrap(), "mediawiki");
+        assert_eq!(format_for_path("book.dbk").as_deref(), Some("docbook"));
+        assert_eq!(format_for_path("page.wiki").as_deref(), Some("mediawiki"));
         assert_eq!(format_for_path("doc.rst").as_deref(), Some("rst"));
         assert_eq!(format_for_path("notes.adoc").as_deref(), Some("asciidoc"));
         assert_eq!(format_for_path("feeds.opml").as_deref(), Some("opml"));

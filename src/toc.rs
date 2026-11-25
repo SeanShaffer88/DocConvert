@@ -51,6 +51,8 @@ pub fn entries(input: &str, from: &str) -> CResult<Vec<Entry>> {
         "markdown" => input.to_string(),
         "rst" => crate::rst::to_markdown(input)?,
         "asciidoc" => crate::asciidoc::to_markdown(input)?,
+        "docbook" => crate::docbook::to_markdown(input)?,
+        "mediawiki" => crate::mediawiki::to_markdown(input)?,
         other => {
             return Err((
                 ERR_NOT_SUPPORTED,

@@ -6,6 +6,30 @@
 const SAMPLE: &str = include_str!("fixtures/sample.md");
 const RELEASE_NOTES: &str = include_str!("fixtures/release-notes.md");
 
+/// The two new readers reach HTML through the same pipeline as the old
+/// ones (Markdown first), and `toc` reads their headings with the same
+/// anchors the conversions write.
+#[test]
+fn docbook_and_mediawiki_reach_html() {
+    let book = "<book><title>Guide</title><chapter><title>Install</title>\
+                <para>Run <literal>setup</literal>.</para></chapter></book>";
+    let html = docconvert::convert::convert(book, "docbook", "html").unwrap();
+    for needle in ["<h1>Guide</h1>", "<h2>Install</h2>", "<code>setup</code>"] {
+        assert!(html.contains(needle), "missing {needle:?} in:\n{html}");
+    }
+
+    let wiki = "== Install ==\n\nRun ''this''.\n\n* one\n* two\n";
+    let html = docconvert::convert::convert(wiki, "mediawiki", "html").unwrap();
+    for needle in ["<h2>Install</h2>", "<em>this</em>", "<li>one</li>"] {
+        assert!(html.contains(needle), "missing {needle:?} in:\n{html}");
+    }
+
+    let toc = docconvert::toc::render_from(wiki, "mediawiki", "markdown").unwrap();
+    assert!(toc.contains("[Install](#install)"), "{toc}");
+    let toc = docconvert::toc::render_from(book, "docbook", "html").unwrap();
+    assert!(toc.contains("href=\"#install\""), "{toc}");
+}
+
 #[test]
 fn sample_document_structure() {
     let html = docconvert::convert::convert(SAMPLE, "markdown", "html").unwrap();

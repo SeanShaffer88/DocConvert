@@ -1,5 +1,64 @@
 # DocConvert roadmap
 
+## Next
+
+Nothing is committed here: the roadmap is complete, and every item it
+ever listed has shipped. A new format is still welcome, but only behind
+the same matrix shape and with the same honesty about subsets — one
+reader that lands as Markdown, three targets (`markdown|html|text`), one
+line in `convert::MATRIX`, a `sample()` document the matrix test can
+convert, and the non-goals below left standing.
+
+## Non-goals
+
+- **Layout formats (DOCX, PDF).** Those are real document models, not
+  text conversions; PDF belongs to PDFKit.
+- **AsciiDoc (full).** This was the one item the roadmap carried as
+  "later" that this release does not ship, because it is a different
+  tool: full AsciiDoc resolves `include::`, evaluates conditional
+  directives and substitutes attributes against a build environment. It
+  is a preprocessor with a file system, not a reader of a document.
+  `src/asciidoc.rs` reads the document itself — sections, lists, tables,
+  delimited blocks, admonitions, the inline markup — and leaves what
+  surrounds it to the build.
+
+## Shipped in v0.13 — the last formats
+
+- **DocBook (subset)** as a source: an XML tree walker over the
+  sectioning elements, `title` as the heading, paragraphs, listings with
+  their `language`, itemized/ordered/variable lists, CALS and
+  `tr`/`td` tables, quotes, admonitions, figure captions, `footnote` as a
+  GFM footnote, and the inline set (`emphasis`, `strong`, the
+  `literal`/`code`/… family, `link`/`ulink`/`uri`/`email`/`xref`).
+  Comments, processing instructions and the doctype are dropped,
+  entities are decoded, CDATA is verbatim, and nesting deeper than 128
+  elements is `DC_ERR_CORRUPT` instead of a stack overflow.
+  `docbook → markdown|html|text`.
+- **MediaWiki (subset)** as a source: `== Heading ==` sections,
+  `''italic''`/`'''bold'''`, internal and external links, `*`/`#` lists
+  with any nesting, definition lists, `{| … |}` tables with captions and
+  header rows, preformatted and `<source lang="…">` blocks, `<ref>`
+  footnotes, `----` rules and the inline tags. Templates, magic words,
+  signatures and `Category:`/`File:` links are dropped, because they
+  name things that live in the wiki rather than in the document.
+  `mediawiki → markdown|html|text`.
+- **The matrix is 44 pairs** now, and `matrix_is_exact` still converts
+  every listed pair and refuses every unlisted one.
+
+## Shipped in v0.12 — the review pass
+
+- **Valid JSON from text that only looks numeric**, **depth caps** on
+  every parser that recurses over input, strict MCP `initialize`, flag
+  precedence, and the allocation-free JSON parser.
+- **`normalize` became a real fixed point**: fences own their run length
+  (tildes are fences), an empty code block is two lines, the spaces after
+  a list marker are structure, adjacent lists of a kind merge, a setext
+  heading is one line, and inline rewrites only happen where they cannot
+  change how backticks pair. It settles — repeated passes until one
+  changes nothing.
+- **`markdown → json`**, the 38th pair, and **a seeded fuzz suite** with
+  a CI sweep, an ignored long one, a hang watchdog and a shrinker.
+
 ## Shipped in v0.11 — the rest of the table language
 
 - **Spans and wrapped cells**: rST grid and simple tables and AsciiDoc
@@ -41,28 +100,10 @@
   64 KiB chunks; every other pair keeps the whole-buffer path, which is
   what correctness requires.
 
-Both readers land as Markdown and are rendered by the Markdown
-renderers, so a document's Markdown, HTML and text never disagree; `toc`
-reads them with the same anchors. The matrix is 38 pairs, the last
-one `markdown → json`.
-
-## Next
-
-Nothing is committed here: the roadmap as written is complete. The
-candidates below are deliberately small and only worth taking if they
-earn their keep.
-
-- **rST and AsciiDoc tables** — grid/simple tables and `|===` would
-  extend both readers to the one construct they still refuse.
-- **Emphasis style options for `normalize`** — an opt-in `*`/`_` and
-  code-fence style layer on top of today's canonical form.
-- **Streaming for more than identity** — only possible with a
-  block-at-a-time Markdown pipeline; the string API stays the contract.
-
-## Later
-
-- More formats behind the same matrix shape: AsciiDoc (full), DocBook,
-  MediaWiki.
+All four document readers land as Markdown and are rendered by the
+Markdown renderers, so a document's Markdown, HTML and text never
+disagree; `toc` reads them with the same anchors. The matrix is 44 pairs
+today.
 
 ## Shipped in v0.8
 
@@ -143,23 +184,3 @@ earn their keep.
 - ABI: `dc_convert_opts`, `dc_convert_file_opts`,
   `dc_front_matter_json`; one `convert::MATRIX` drives dispatch and
   `dc_matrix_json()` alike.
-
-## Next
-
-- **reStructuredText (subset)** as a second portable-document source —
-  headings, lists, literal blocks and links — behind the same matrix
-  shape and the same heading/`toc` machinery.
-- **Emphasis and inline normalization** for `normalize`: the style axis
-  (`*`/`_`, code fences, line wrapping) that v0.8 deliberately left
-  alone, opt-in so structure stays the default.
-- **Streaming `convert_file`** for inputs too large to hold twice (the
-  string API stays the default and the ABI contract).
-
-## Later
-
-- More formats behind the same matrix shape: AsciiDoc (subset), OPML.
-
-## Non-goals
-
-- No layout formats (DOCX/PDF) — those are real document models,
-  not text conversions; PDF belongs to PDFKit.
