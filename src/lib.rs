@@ -18,9 +18,9 @@ pub mod json;
 pub mod markdown;
 pub mod platform;
 
-pub const VERSION: &str = "0.2.0";
+pub const VERSION: &str = "0.3.0";
 pub const VERSION_MAJOR: u32 = 0;
-pub const VERSION_MINOR: u32 = 2;
+pub const VERSION_MINOR: u32 = 3;
 pub const VERSION_PATCH: u32 = 0;
 
 // Error codes (mirror include/docconvert.h).

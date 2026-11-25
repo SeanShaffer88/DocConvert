@@ -1,5 +1,16 @@
 # DocConvert roadmap
 
+## Shipped in v0.3
+
+- **Command line front end** (`docconvert.exe`) with the same matrix:
+  pipe-friendly `convert`, `frontmatter`, JSON introspection
+  (`formats`, `matrix`, and a single `capabilities` object), and exit
+  codes that mirror the `DC_*` codes. Formats are inferred from file
+  extensions; stdin/stdout require an explicit format instead of a
+  guess.
+- One JSON description (`convert::formats_json` / `matrix_json`)
+  shared by the ABI and the CLI.
+
 ## Shipped in v0.2
 
 - **Reference-style links** and link definitions in the Markdown
