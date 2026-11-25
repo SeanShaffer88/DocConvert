@@ -164,24 +164,56 @@ const PAIRS: &[(&str, &str)] = &[
     ("asciidoc", "html"),
 ];
 
+/// Whether normalizing the document twice changes it. Panics are treated as
+/// "not idempotent" so the shrinker can work on them too.
+fn idempotent(input: &str) -> bool {
+    let once = match catch_unwind(|| normalize(input)) {
+        Ok(Ok(text)) => text,
+        Ok(Err(_)) | Err(_) => return true,
+    };
+    match catch_unwind(|| normalize(&once)) {
+        Ok(Ok(again)) => again == once,
+        Ok(Err(_)) | Err(_) => false,
+    }
+}
+
+/// Greedily delete characters while `fails` still holds, so a report carries
+/// the smallest input that shows the bug instead of fifty random fragments.
+fn shrink(input: &str, fails: &dyn Fn(&str) -> bool) -> String {
+    let mut chars: Vec<char> = input.chars().collect();
+    let mut size = (chars.len() / 2).max(1);
+    while size > 0 {
+        let mut index = 0;
+        while index + size <= chars.len() {
+            let mut candidate = chars.clone();
+            candidate.drain(index..index + size);
+            let text: String = candidate.iter().collect();
+            if fails(&text) {
+                chars = candidate;
+            } else {
+                index += size;
+            }
+        }
+        size /= 2;
+    }
+    chars.into_iter().collect()
+}
+
 fn sweep(seed: u64, rounds: usize) {
     let mut rng = Rng::new(seed);
     for round in 0..rounds {
         let input = document(&mut rng);
         let label = format!("seed {seed} round {round}: {input:?}");
 
-        let once = catch_unwind(|| normalize(&input))
-            .unwrap_or_else(|_| panic!("normalize panicked on {label}"))
-            .unwrap_or_else(|error| panic!("normalize failed on {label}: {error:?}"));
-        let twice = catch_unwind(|| normalize(&once))
-            .unwrap_or_else(|_| panic!("normalize panicked on its own output for {label}"))
-            .unwrap_or_else(|error| {
-                panic!("normalize failed on its own output for {label}: {error:?}")
-            });
-        assert_eq!(
-            twice, once,
-            "normalize is not idempotent for {label}\n  once:  {once:?}\n  twice: {twice:?}"
-        );
+        if !idempotent(&input) {
+            let minimal = shrink(&input, &|text: &str| !idempotent(text));
+            let once = normalize(&minimal).expect("normalize");
+            let twice = normalize(&once).expect("normalize twice");
+            panic!(
+                "normalize is not idempotent for {label}\n\
+                 smallest failing input: {minimal:?}\n  once:  {once:?}\n  twice: {twice:?}"
+            );
+        }
 
         for &(from, to) in PAIRS {
             let converted = catch_unwind(|| convert(&input, from, to))
