@@ -5,18 +5,23 @@
 //! absurd nesting, odd whitespace — and then asserts three things about
 //! every one of them:
 //!
-//! 1. no reader or renderer **panics** (a panic in the DLL takes the host
-//!    down, so this is the one bug class a caller cannot work around);
+//! 1. no reader or renderer **panics**, and none of them **hangs** (a panic
+//!    in the DLL takes the host down and a loop takes it round and round, so
+//!    these are the two bug classes a caller cannot work around);
 //! 2. `normalize` is **idempotent** — normalizing its own output changes
 //!    nothing, and in particular does not grow the document;
 //! 3. anything that claims to write **JSON** can be parsed back.
 //!
 //! Everything is seeded: a failure message carries the seed, the round and
-//! the exact input, so it reproduces with no other state. The default sweep
-//! is small enough for CI; `cargo test --release -- --ignored` runs the long
-//! one, which is what to reach for after a parser change.
+//! the input, so it reproduces with no other state. A failing idempotence
+//! check is shrunk first, so the message normally carries four or five
+//! characters rather than fifty random fragments. The default sweep is small
+//! enough for CI; `cargo test --release -- --ignored` runs the long one,
+//! which is what to reach for after a parser change.
 
 use std::panic::catch_unwind;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::Duration;
 
 use docconvert::convert::convert;
 use docconvert::json::parse_json;
@@ -167,17 +172,34 @@ const PAIRS: &[(&str, &str)] = &[
     ("asciidoc", "html"),
 ];
 
-/// Whether normalizing the document twice changes it. Panics are treated as
-/// "not idempotent" so the shrinker can work on them too.
-fn idempotent(input: &str) -> bool {
-    let once = match catch_unwind(|| normalize(input)) {
-        Ok(Ok(text)) => text,
-        Ok(Err(_)) | Err(_) => return true,
-    };
-    match catch_unwind(|| normalize(&once)) {
-        Ok(Ok(again)) => again == once,
-        Ok(Err(_)) | Err(_) => false,
+/// How long one conversion may take before the sweep calls it a hang.
+const BUDGET: Duration = Duration::from_secs(10);
+
+/// Run `work` on another thread, so a loop that never ends is *reported*
+/// instead of leaving the suite (and the CI job) waiting for a cancel.
+fn within<T: Send + 'static>(label: &str, work: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(work());
+    });
+    match rx.recv_timeout(BUDGET) {
+        Ok(value) => value,
+        Err(RecvTimeoutError::Timeout) => {
+            panic!("a conversion did not finish within {:?}\n{label}", BUDGET)
+        }
+        Err(RecvTimeoutError::Disconnected) => panic!("a conversion panicked\n{label}"),
     }
+}
+
+/// The message of a caught panic, when it has one.
+fn panic_text(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(text) = payload.downcast_ref::<String>() {
+        return text.clone();
+    }
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        return text.to_string();
+    }
+    "a conversion panicked without a message".to_string()
 }
 
 /// Greedily delete characters while `fails` still holds, so a report carries
@@ -214,25 +236,58 @@ fn shrink(input: &str, fails: &dyn Fn(&str) -> bool) -> String {
     chars.into_iter().collect()
 }
 
+/// Whether normalizing the document twice changes it — the predicate the
+/// shrinker works on. (The sweep itself runs each pass under `within`.)
+fn changes_when_normalized_twice(input: &str) -> bool {
+    let once = match normalize(input) {
+        Ok(text) => text,
+        Err(_) => return false,
+    };
+    match normalize(&once) {
+        Ok(again) => again != once,
+        Err(_) => true,
+    }
+}
+
 fn sweep(seed: u64, rounds: usize) {
     let mut rng = Rng::new(seed);
     for round in 0..rounds {
         let input = document(&mut rng);
         let label = format!("seed {seed} round {round}: {input:?}");
 
-        if !idempotent(&input) {
-            let minimal = shrink(&input, &|text: &str| !idempotent(text));
-            let once = normalize(&minimal).expect("normalize");
-            let twice = normalize(&once).expect("normalize twice");
+        // Liveness and stability, in that order: a hang is reported with the
+        // input that caused it, before anything tries to shrink it.
+        let source = input.clone();
+        let once = match catch_unwind(move || within(&label, move || normalize(&source))) {
+            Ok(Ok(text)) => text,
+            Ok(Err(error)) => panic!("normalize failed on {label}: {error:?}"),
+            Err(payload) => panic!("{}", panic_text(payload)),
+        };
+        let second = once.clone();
+        let twice = match catch_unwind(move || within(&label, move || normalize(&second))) {
+            Ok(Ok(text)) => text,
+            Ok(Err(error)) => panic!("normalize failed on its own output for {label}: {error:?}"),
+            Err(payload) => panic!("{}", panic_text(payload)),
+        };
+        if twice != once {
+            let minimal = shrink(&input, &changes_when_normalized_twice);
+            let minimal_once = normalize(&minimal).unwrap_or_default();
+            let minimal_twice = normalize(&minimal_once).unwrap_or_default();
             panic!(
                 "normalize is not idempotent.\nsmallest failing input: {minimal:?}\n\
-                 once:  {once:?}\n  twice: {twice:?}\n{label}"
+                 once:  {minimal_once:?}\n  twice: {minimal_twice:?}\n{label}"
             );
         }
 
         for &(from, to) in PAIRS {
-            let converted = catch_unwind(|| convert(&input, from, to))
-                .unwrap_or_else(|_| panic!("{from} → {to} panicked on {label}"));
+            let source = input.clone();
+            let pair_label = format!("{from} → {to}\n{label}");
+            let converted =
+                match catch_unwind(move || within(&pair_label, move || convert(&source, from, to)))
+                {
+                    Ok(result) => result,
+                    Err(payload) => panic!("{}", panic_text(payload)),
+                };
             if let Ok(text) = converted {
                 if to == "json" {
                     assert!(
