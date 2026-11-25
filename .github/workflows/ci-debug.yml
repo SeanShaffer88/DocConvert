@@ -1,7 +1,6 @@
 name: ci-debug
 on:
   push:
-
 jobs:
   dbg:
     runs-on: windows-latest
@@ -13,12 +12,9 @@ jobs:
       - name: clippy
         shell: bash
         run: |
-          cargo clippy --all-targets -- -D warnings > /tmp/out.txt 2>&1 || true
-          python -c "
-import re
-lines=open('/tmp/out.txt',encoding='utf-8',errors='replace').read().splitlines()
-for i,l in enumerate(lines):
-    if re.match(r'^(warning|error)', l) or l.strip().startswith('-->'):
-        print('::error::'+l.replace('%','%25').replace('\r','').replace('\n','%0A'))
-"
-          tail -3 /tmp/out.txt
+          set +e
+          cargo clippy --all-targets --message-format=short -- -D warnings > out.txt 2>&1
+          code=$?
+          sed -n 's/^\(.*warning: .*\)$/::error::\1/p' out.txt | head -80
+          sed -n 's/^\(.*error\[[^]]*\].*\)$/::error::\1/p' out.txt | head -80
+          exit $code
