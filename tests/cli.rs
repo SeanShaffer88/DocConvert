@@ -93,6 +93,13 @@ fn introspection_is_machine_readable() {
     let help = run(&["--help"], None);
     assert!(help.status.success());
     assert!(out(&help).contains("capabilities"));
+
+    // A bare invocation is the usage text, not a wait for Enter: only a
+    // console that exists for this process alone (a double-click) pauses.
+    let bare = run(&[], None);
+    assert!(bare.status.success());
+    assert!(out(&bare).contains("USAGE"));
+    assert!(!out(&bare).contains("Press Enter to close"));
 }
 
 #[test]

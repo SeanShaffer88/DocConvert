@@ -40,6 +40,12 @@ fn main() -> ExitCode {
         println!("docconvert-mcp {}", docconvert::VERSION);
         return ExitCode::SUCCESS;
     }
+    if docconvert::platform::double_clicked(&args) {
+        print!("{}", docconvert::platform::mcp_double_click_notice());
+        let mut line = String::new();
+        let _ = io::stdin().read_line(&mut line);
+        return ExitCode::SUCCESS;
+    }
     let stdin = io::stdin();
     let stdout = io::stdout();
     match docconvert::mcp::serve(BufReader::new(stdin.lock()), BufWriter::new(stdout.lock())) {
