@@ -599,7 +599,11 @@ fn normalize_inline(text: &str, marker: char) -> String {
                 // different run structure on the next pass — normalize would
                 // then not be idempotent, and repeating it would keep
                 // changing the document. Such a span stays byte for byte.
-                if !trimmed.is_empty() && !trimmed.contains('`') {
+                // A span that crosses a line break keeps its shape too: the
+                // rewrite would join lines that block parsing treats
+                // separately, and the second pass would read the result as one
+                // paragraph (`"`\n]``>``"` lost its line break that way).
+                if !trimmed.is_empty() && !trimmed.contains('`') && !inner.contains('\n') {
                     out.push('`');
                     out.push_str(trimmed);
                     out.push('`');
@@ -628,10 +632,11 @@ fn normalize_inline(text: &str, marker: char) -> String {
                     // and then `**<*>*`. Those spans stay as written.
                     let before = i.checked_sub(1).map(|index| chars[index]);
                     let after = chars.get(close + run).copied();
-                    let safe = [before, after]
-                        .iter()
-                        .all(|neighbour| *neighbour != Some(other) && *neighbour != Some(marker))
-                        && !inner.contains(marker);
+                    let safe = [before, after].iter().all(|neighbour| {
+                        *neighbour != Some(other)
+                            && *neighbour != Some(marker)
+                            && *neighbour != Some('`')
+                    }) && !inner.contains(marker);
                     if ends_word && safe {
                         out.push_str(&marker.to_string().repeat(run));
                         out.push_str(&inner);
@@ -1942,6 +1947,12 @@ mod tests {
         assert_eq!(once, normalize(&once).unwrap());
         // An inline span whose text holds a backtick is left byte for byte.
         let once = normalize("```\\``😀``").unwrap();
+        assert_eq!(once, normalize(&once).unwrap(), "{once:?}");
+        // So is a span that crosses a line break.
+        let once = normalize("`\n]``>``").unwrap();
+        assert_eq!(once, normalize(&once).unwrap(), "{once:?}");
+        // And an emphasis rewrite never lands beside a backtick.
+        let once = normalize("_``_``\n").unwrap();
         assert_eq!(once, normalize(&once).unwrap(), "{once:?}");
     }
 
